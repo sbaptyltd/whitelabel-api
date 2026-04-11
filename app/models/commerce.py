@@ -1,22 +1,52 @@
+from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger, Boolean, Column, DateTime, Enum, ForeignKey, Integer, Numeric,
-    String, Text, TIMESTAMP, JSON,text
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    TIMESTAMP,
+    JSON,
+    text,
 )
+
 from app.db.base import Base
+
 
 class Tenant(Base):
     __tablename__ = "tenants"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_code = Column(String(100), unique=True, nullable=False)
     tenant_name = Column(String(255), nullable=False)
     domain_name = Column(String(255), nullable=True)
-    app_status = Column(Enum("ACTIVE", "INACTIVE", name="tenant_app_status"), nullable=False, default="ACTIVE")
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    app_status = Column(
+        Enum("ACTIVE", "INACTIVE", name="tenant_app_status"),
+        nullable=False,
+        default="ACTIVE",
+    )
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class TenantAppConfig(Base):
     __tablename__ = "tenant_app_config"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False, unique=True)
     app_name = Column(String(255), nullable=False)
@@ -38,11 +68,22 @@ class TenantAppConfig(Base):
     enable_guest_checkout = Column(Boolean, nullable=False, default=False)
     enable_cod = Column(Boolean, nullable=False, default=False)
     enable_online_payment = Column(Boolean, nullable=False, default=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class TenantBanner(Base):
     __tablename__ = "tenant_banners"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     title = Column(String(255), nullable=True)
@@ -52,11 +93,22 @@ class TenantBanner(Base):
     action_value = Column(String(255), nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class User(Base):
     __tablename__ = "users"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     full_name = Column(String(255), nullable=True)
@@ -64,23 +116,48 @@ class User(Base):
     email = Column(String(255), nullable=True)
     country_code = Column(String(10), nullable=True)
     is_mobile_verified = Column(Boolean, nullable=False, default=False)
-    status = Column(Enum("ACTIVE", "BLOCKED", "INACTIVE", name="user_status"), nullable=False, default="ACTIVE")
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    status = Column(
+        Enum("ACTIVE", "BLOCKED", "INACTIVE", name="user_status"),
+        nullable=False,
+        default="ACTIVE",
+    )
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class OtpRequest(Base):
     __tablename__ = "otp_requests"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     mobile_number = Column(String(30), nullable=False)
     otp_code = Column(String(10), nullable=False)
-    purpose = Column(Enum("LOGIN", "SIGNUP", "RESET", name="otp_purpose"), nullable=False, default="LOGIN")
+    purpose = Column(
+        Enum("LOGIN", "SIGNUP", "RESET", name="otp_purpose"),
+        nullable=False,
+        default="LOGIN",
+    )
     is_used = Column(Boolean, nullable=False, default=False)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
 
 class Category(Base):
     __tablename__ = "categories"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     category_name = Column(String(255), nullable=False)
@@ -88,11 +165,22 @@ class Category(Base):
     image_url = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class Product(Base):
     __tablename__ = "products"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     category_id = Column(BigInteger, ForeignKey("categories.id"), nullable=True)
@@ -110,11 +198,22 @@ class Product(Base):
     stock_qty = Column(Integer, nullable=False, default=0)
     is_featured = Column(Boolean, nullable=False, default=False)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class ProductPrice(Base):
     __tablename__ = "product_prices"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     product_id = Column(BigInteger, ForeignKey("products.id"), nullable=False)
@@ -123,20 +222,46 @@ class ProductPrice(Base):
     start_at = Column(DateTime, nullable=True)
     end_at = Column(DateTime, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class Cart(Base):
     __tablename__ = "carts"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
-    status = Column(Enum("ACTIVE", "CHECKED_OUT", "ABANDONED", name="cart_status"), nullable=False, default="ACTIVE")
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    status = Column(
+        Enum("ACTIVE", "CHECKED_OUT", "ABANDONED", name="cart_status"),
+        nullable=False,
+        default="ACTIVE",
+    )
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class CartItem(Base):
     __tablename__ = "cart_items"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     cart_id = Column(BigInteger, ForeignKey("carts.id"), nullable=False)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
@@ -147,18 +272,47 @@ class CartItem(Base):
     unit_price_snapshot = Column(Numeric(12, 2), nullable=False)
     quantity = Column(Integer, nullable=False, default=1)
     line_total = Column(Numeric(12, 2), nullable=False)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class Order(Base):
     __tablename__ = "orders"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
     cart_id = Column(BigInteger, ForeignKey("carts.id"), nullable=True)
     order_number = Column(String(100), nullable=False)
-    order_status = Column(Enum("PENDING","PAID","CONFIRMED","PROCESSING","SHIPPED","DELIVERED","CANCELLED","FAILED", name="order_status_enum"), nullable=False, default="PENDING")
-    payment_status = Column(Enum("PENDING","SUCCESS","FAILED","REFUNDED", name="payment_status_enum"), nullable=False, default="PENDING")
+    order_status = Column(
+        Enum(
+            "PENDING",
+            "PAID",
+            "CONFIRMED",
+            "PROCESSING",
+            "SHIPPED",
+            "DELIVERED",
+            "CANCELLED",
+            "FAILED",
+            name="order_status_enum",
+        ),
+        nullable=False,
+        default="PENDING",
+    )
+    payment_status = Column(
+        Enum("PENDING", "SUCCESS", "FAILED", "REFUNDED", name="payment_status_enum"),
+        nullable=False,
+        default="PENDING",
+    )
     subtotal_amount = Column(Numeric(12, 2), nullable=False, default=0)
     tax_amount = Column(Numeric(12, 2), nullable=False, default=0)
     delivery_amount = Column(Numeric(12, 2), nullable=False, default=0)
@@ -170,11 +324,22 @@ class Order(Base):
     customer_email = Column(String(255), nullable=True)
     notes = Column(Text, nullable=True)
     placed_at = Column(DateTime, nullable=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class OrderItem(Base):
     __tablename__ = "order_items"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     order_id = Column(BigInteger, ForeignKey("orders.id"), nullable=False)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
@@ -186,10 +351,16 @@ class OrderItem(Base):
     unit_price_snapshot = Column(Numeric(12, 2), nullable=False)
     quantity = Column(Integer, nullable=False)
     line_total = Column(Numeric(12, 2), nullable=False)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
 
 class Payment(Base):
     __tablename__ = "payments"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
@@ -199,34 +370,92 @@ class Payment(Base):
     payment_intent_id = Column(String(255), nullable=True)
     amount = Column(Numeric(12, 2), nullable=False)
     currency_code = Column(String(10), nullable=False, default="AUD")
-    payment_status = Column(Enum("CREATED","PENDING","SUCCESS","FAILED","REFUNDED", name="payments_status_enum"), nullable=False, default="CREATED")
+    payment_status = Column(
+        Enum(
+            "CREATED",
+            "PENDING",
+            "SUCCESS",
+            "FAILED",
+            "REFUNDED",
+            name="payments_status_enum",
+        ),
+        nullable=False,
+        default="CREATED",
+    )
     raw_response_json = Column(JSON, nullable=True)
     paid_at = Column(DateTime, nullable=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class NotificationTemplate(Base):
     __tablename__ = "notification_templates"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
-    template_type = Column(Enum("EMAIL_ORDER_CONFIRMATION","SMS_ORDER_CONFIRMATION","OTP_SMS","OTP_EMAIL", name="notification_template_type"), nullable=False)
+    template_type = Column(
+        Enum(
+            "EMAIL_ORDER_CONFIRMATION",
+            "SMS_ORDER_CONFIRMATION",
+            "OTP_SMS",
+            "OTP_EMAIL",
+            name="notification_template_type",
+        ),
+        nullable=False,
+    )
     subject = Column(String(255), nullable=True)
     body = Column(Text, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
 
 class NotificationLog(Base):
     __tablename__ = "notification_logs"
+
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
     order_id = Column(BigInteger, ForeignKey("orders.id"), nullable=True)
-    channel = Column(Enum("EMAIL","SMS", name="notification_channel"), nullable=False)
+    channel = Column(
+        Enum("EMAIL", "SMS", name="notification_channel"),
+        nullable=False,
+    )
     recipient = Column(String(255), nullable=False)
     subject = Column(String(255), nullable=True)
     message_body = Column(Text, nullable=False)
-    delivery_status = Column(Enum("PENDING","SENT","FAILED", name="notification_delivery_status"), nullable=False, default="PENDING")
+    delivery_status = Column(
+        Enum("PENDING", "SENT", "FAILED", name="notification_delivery_status"),
+        nullable=False,
+        default="PENDING",
+    )
     provider_message_id = Column(String(255), nullable=True)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = Column(TIMESTAMP)
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
