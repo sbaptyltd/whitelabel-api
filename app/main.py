@@ -15,32 +15,32 @@ from app.api.routes.categories_admin import router as categories_admin_router
 from app.api.routes.products_admin import router as products_admin_router
 from app.api.routes.uploads import router as uploads_router
 
+
+
+# Create FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
 )
 
-allowed_origins = [
-    "http://localhost:49999",
-    "http://localhost:54392",
-    "http://localhost:3000",
-    "http://127.0.0.1:49999",
-    "http://127.0.0.1:54392",
-    "http://127.0.0.1:3000",
-]
 
+# CORS (adjust for production later)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],  # TODO: restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+# Health check (Cloud Run uses this)
 @app.get("/")
 def root():
     return {"message": f"{settings.APP_NAME} is running"}
 
+
+# Include routers
 app.include_router(health_router)
 app.include_router(bootstrap_router)
 app.include_router(auth_router)
@@ -52,6 +52,9 @@ app.include_router(categories_admin_router)
 app.include_router(products_admin_router)
 app.include_router(uploads_router)
 
+
+
+# Optional: startup log (useful in Cloud Run logs)
 @app.on_event("startup")
 def startup_event():
     print("🚀 Application started successfully")
