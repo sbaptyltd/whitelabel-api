@@ -17,6 +17,10 @@ from app.schemas.product_admin import (
 router = APIRouter(prefix="/api/products/admin", tags=["products_admin"])
 
 
+def _ensure_super_user(current_user):
+    if getattr(current_user, "role", "user") != "super_user":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
 @router.get("", response_model=list[ProductAdminResponse])
 def list_products_admin(
     search: Optional[str] = Query(default=None),
@@ -28,6 +32,7 @@ def list_products_admin(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    _ensure_super_user(current_user)
     query = db.query(Product).filter(Product.tenant_id == current_user.tenant_id)
 
     if search:

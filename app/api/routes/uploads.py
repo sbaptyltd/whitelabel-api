@@ -8,6 +8,10 @@ from google.cloud import storage
 from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
+def _ensure_super_user(current_user):
+    if getattr(current_user, "role", "user") != "super_user":
+        raise HTTPException(status_code=403, detail="Access denied")
+
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
@@ -41,6 +45,7 @@ async def upload_image(
     folder: str = Form(default="general"),
     current_user=Depends(get_current_user),
 ):
+    _ensure_super_user(current_user)
     if not GCS_BUCKET_NAME:
         raise HTTPException(status_code=500, detail="Missing GCS_BUCKET_NAME")
 

@@ -112,6 +112,7 @@ class User(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     full_name = Column(String(255), nullable=True)
+    role = Column(String(50), nullable=False, default="user")
     mobile_number = Column(String(30), nullable=False)
     email = Column(String(255), nullable=True)
     country_code = Column(String(10), nullable=True)

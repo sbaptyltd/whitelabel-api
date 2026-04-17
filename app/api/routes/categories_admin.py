@@ -14,6 +14,10 @@ from app.schemas.category_admin import (
     CategoryAdminUpdate,
 )
 
+def _ensure_super_user(current_user):
+    if getattr(current_user, "role", "user") != "super_user":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
 router = APIRouter(prefix="/api/categories/admin", tags=["categories_admin"])
 
 
@@ -26,6 +30,7 @@ def list_categories_admin(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    _ensure_super_user(current_user)
     query = db.query(Category).filter(Category.tenant_id == current_user.tenant_id)
 
     if search:

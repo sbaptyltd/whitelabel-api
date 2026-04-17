@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from app.api.deps import get_current_user
 
 from app.core.config import settings
 from app.db.session import get_db
@@ -15,6 +16,17 @@ from app.services.security import create_access_token
 from app.services.twilio_sms import generate_otp, send_sms_otp, normalize_phone_number
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+@router.get("/me")
+def me(current_user=Depends(get_current_user)):
+    return {
+        "id": int(current_user.id),
+        "tenant_id": int(current_user.tenant_id),
+        "mobile_number": current_user.mobile_number,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+    }
 
 
 @router.post("/request-otp", response_model=RequestOtpResponse)
