@@ -365,11 +365,14 @@ class Payment(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
     order_id = Column(BigInteger, ForeignKey("orders.id"), nullable=False)
-    payment_provider = Column(String(100), nullable=False)
+
+    payment_provider = Column(String(100), nullable=False, default="stripe")
     payment_reference = Column(String(255), nullable=True)
-    payment_intent_id = Column(String(255), nullable=True)
+    payment_intent_id = Column(String(255), nullable=True, unique=True)
+
     amount = Column(Numeric(12, 2), nullable=False)
     currency_code = Column(String(10), nullable=False, default="AUD")
+
     payment_status = Column(
         Enum(
             "CREATED",
@@ -382,8 +385,12 @@ class Payment(Base):
         nullable=False,
         default="CREATED",
     )
+
     raw_response_json = Column(JSON, nullable=True)
     paid_at = Column(DateTime, nullable=True)
+    failure_reason = Column(Text, nullable=True)
+    refunded_at = Column(DateTime, nullable=True)
+
     created_at = Column(
         TIMESTAMP,
         nullable=False,
