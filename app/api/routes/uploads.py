@@ -75,14 +75,16 @@ async def upload_image(
 
         # Optional: make public if your bucket policy allows it
         # If bucket is private, keep this commented and use signed URLs later
-        blob.make_public()
+        signed_url = blob.generate_signed_url(
+            version="v4",
+            expiration=3600,  # 1 hour
+            method="GET"
+        )
 
         return {
             "message": "Image uploaded successfully",
-            "image_url": blob.public_url,
+            "image_url": signed_url,
             "object_name": object_name,
-            "content_type": file.content_type,
-            "size_bytes": len(content),
         }
 
     except HTTPException:
