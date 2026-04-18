@@ -18,7 +18,8 @@ def _ensure_super_user(current_user):
     if getattr(current_user, "role", "user") != "super_user":
         raise HTTPException(status_code=403, detail="Access denied")
     
-router = APIRouter(prefix="/api/categories/admin", tags=["categories_admin"])
+
+router = APIRouter(prefix="/api/admin/categories", tags=["categories_admin"])
 
 
 @router.get("", response_model=list[CategoryAdminResponse])

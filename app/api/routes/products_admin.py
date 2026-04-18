@@ -14,7 +14,7 @@ from app.schemas.product_admin import (
     ProductAdminUpdate,
 )
 
-router = APIRouter(prefix="/api/products/admin", tags=["products_admin"])
+router = APIRouter(prefix="/api/admin/products", tags=["products_admin"])
 
 
 def _ensure_super_user(current_user):
