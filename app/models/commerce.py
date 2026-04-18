@@ -105,6 +105,7 @@ class TenantBanner(Base):
         onupdate=datetime.utcnow,
     )
 
+
 class User(Base):
     __tablename__ = "users"
 
@@ -154,38 +155,6 @@ class OtpRequest(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-
-
-    __tablename__ = "products"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
-    category_id = Column(BigInteger, ForeignKey("categories.id"), nullable=True)
-    product_name = Column(String(255), nullable=False)
-    product_slug = Column(String(255), nullable=False)
-    short_description = Column(String(255), nullable=True)
-    long_description = Column(Text, nullable=True)
-    sku = Column(String(100), nullable=True)
-    barcode = Column(String(100), nullable=True)
-    image_url = Column(Text, nullable=True)
-    gallery_json = Column(JSON, nullable=True)
-    base_price = Column(Numeric(12, 2), nullable=False, default=0)
-    sale_price = Column(Numeric(12, 2), nullable=True)
-    currency_code = Column(String(10), nullable=False, default="AUD")
-    stock_qty = Column(Integer, nullable=False, default=0)
-    is_featured = Column(Boolean, nullable=False, default=False)
-    is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
 
 class Category(Base):
     __tablename__ = "categories"
@@ -244,6 +213,7 @@ class Product(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+
 
 class ProductPrice(Base):
     __tablename__ = "product_prices"
