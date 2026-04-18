@@ -41,15 +41,16 @@ def root():
 
 
 # Include routers
+
 app.include_router(health_router)
 app.include_router(bootstrap_router)
 app.include_router(auth_router)
+app.include_router(categories_admin_router)
+app.include_router(products_admin_router)
 app.include_router(products_router)
 app.include_router(cart_router)
 app.include_router(orders_router)
 app.include_router(payments_router)
-app.include_router(categories_admin_router)
-app.include_router(products_admin_router)
 app.include_router(uploads_router)
 
 
