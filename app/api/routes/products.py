@@ -60,7 +60,7 @@ def _to_product_dict(product: Product, category_name: str | None = None):
         "short_description": product.short_description,
         "long_description": product.long_description,
         "brand_name": product.brand_name,
-        "image_url": product.image_url,
+        "image_url": image_url,
         "price": float(price or 0),
         "base_price": float(product.base_price or 0),
         "sale_price": float(product.sale_price) if product.sale_price is not None else None,
