@@ -8,4 +8,5 @@ PyJWT==2.9.0
 twilio==9.3.0
 stripe
 google-cloud-storage
+google-auth
 python-multipart

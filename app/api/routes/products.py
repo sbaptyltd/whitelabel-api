@@ -1,7 +1,14 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from datetime import timedelta
+
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
+
+
+import os
+from datetime import timedelta
+
+import google.auth
+from google.auth.transport.requests import Request
 from google.cloud import storage
 
 from app.db.session import get_db
@@ -9,6 +16,7 @@ from app.models.commerce import Category, Product, Tenant
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 storage_client = storage.Client()
+
 
 
 def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
@@ -25,15 +33,28 @@ def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
 
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+
+        credentials.refresh(Request())
+
+        service_account_email = os.getenv(
+            "SIGNED_URL_SERVICE_ACCOUNT",
+            "184732521634-compute@developer.gserviceaccount.com",
+        )
+
         return blob.generate_signed_url(
             version="v4",
             expiration=timedelta(hours=6),
             method="GET",
+            service_account_email=service_account_email,
+            access_token=credentials.token,
         )
-    except Exception:
+
+    except Exception as e:
+        print(f"Signed URL failed for {gs_uri}: {e}")
         return None
-
-
     
 def _get_tenant_by_code(db: Session, tenant_code: str):
     tenant = (
