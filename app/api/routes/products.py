@@ -1,13 +1,40 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
+from datetime import timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
+from google.cloud import storage
 
 from app.db.session import get_db
 from app.models.commerce import Category, Product, Tenant
 
 router = APIRouter(prefix="/api", tags=["catalog"])
+storage_client = storage.Client()
 
 
+def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
+    if not gs_uri:
+        return None
+
+    if not gs_uri.startswith("gs://"):
+        return gs_uri
+
+    try:
+        path = gs_uri.replace("gs://", "", 1)
+        bucket_name, blob_name = path.split("/", 1)
+
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(hours=6),
+            method="GET",
+        )
+    except Exception:
+        return None
+
+
+    
 def _get_tenant_by_code(db: Session, tenant_code: str):
     tenant = (
         db.query(Tenant)
@@ -21,6 +48,7 @@ def _get_tenant_by_code(db: Session, tenant_code: str):
 
 def _to_product_dict(product: Product, category_name: str | None = None):
     price = product.sale_price if product.sale_price is not None else product.base_price
+    image_url = _signed_url_from_gs_uri(product.image_url)
     return {
         "id": int(product.id),
         "tenant_id": int(product.tenant_id),
