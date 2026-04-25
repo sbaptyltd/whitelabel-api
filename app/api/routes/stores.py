@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-# USE THE SAME get_db IMPORT USED IN YOUR OTHER WORKING ROUTES
 from app.db.session import get_db
 
 from app.models.store import Store, StorePincode
-from app.models.commerce import Tenant, TenantAppConfig, TenantBanner
+from app.models.commerce import Tenant
 
 
 router = APIRouter(
@@ -20,11 +19,6 @@ def check_pincode(
     pincode: str = Query(...),
     db: Session = Depends(get_db),
 ):
-    """
-    Example:
-    /api/stores/check-pincode?tenant_code=desi-tales&pincode=3023
-    """
-
     clean_tenant = tenant_code.strip()
     clean_pincode = pincode.strip()
 
@@ -61,4 +55,64 @@ def check_pincode(
     return {
         "serviceable": True,
         "message": "Delivery available for this pincode."
+    }
+
+
+@router.get("/nearby")
+def nearby_stores(
+    tenant_code: str = Query(...),
+    pincode: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Example:
+    /api/stores/nearby?tenant_code=desi-tales&pincode=3023
+
+    Used for Click & Collect.
+    Returns stores serving or linked to the entered pincode.
+    """
+
+    clean_tenant = tenant_code.strip()
+    clean_pincode = pincode.strip()
+
+    tenant = (
+        db.query(Tenant)
+        .filter(Tenant.tenant_code == clean_tenant)
+        .first()
+    )
+
+    if not tenant:
+        return {
+            "stores": [],
+            "message": "Invalid tenant."
+        }
+
+    mappings = (
+        db.query(StorePincode)
+        .join(Store, Store.id == StorePincode.store_id)
+        .filter(
+            Store.tenant_id == tenant.id,
+            Store.is_active == True,
+            StorePincode.is_active == True,
+            StorePincode.pincode == clean_pincode,
+        )
+        .all()
+    )
+
+    stores = []
+    for mapping in mappings:
+        store = mapping.store
+
+        stores.append({
+            "id": store.id,
+            "store_name": store.store_name,
+            "store_email": store.store_email,
+            "store_phone": store.store_phone,
+            "address": store.address,
+            "pincode": clean_pincode,
+        })
+
+    return {
+        "stores": stores,
+        "message": "Stores fetched successfully." if stores else "No stores found for this pincode."
     }
