@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api", tags=["orders"])
 
 
 STORE_ROLES = ["store", "store_admin", "store_user", "store_owner", "super_user", "admin"]
+DELIVERY_ROLES = ["delivery", "delivery_partner", "driver", "super_user", "admin"]
 
 VALID_STORE_STATUSES = [
     "PENDING",
@@ -29,6 +30,7 @@ VALID_STORE_STATUSES = [
     "ACCEPTED",
     "PREPARING",
     "READY",
+    "OUT_FOR_DELIVERY",
     "DISPATCHED",
     "DELIVERED",
     "REJECTED",
@@ -54,17 +56,35 @@ def _require_store_user(current_user):
     user_id = getattr(current_user, "id", None)
     mobile = getattr(current_user, "mobile_number", None)
 
-    print(
-        f"[STORE_AUTH] user_id={user_id} mobile={mobile} "
-        f"role={role} store_id={store_id}"
-    )
+    print(f"[STORE_AUTH] user_id={user_id} mobile={mobile} role={role} store_id={store_id}")
 
     if role not in STORE_ROLES:
         raise HTTPException(
             status_code=403,
+            detail=f"Not allowed for store operations. user_id={user_id}, mobile={mobile}, role={role}, store_id={store_id}",
+        )
+
+    return True
+
+
+def _require_delivery_user(current_user):
+    role = getattr(current_user, "role", None)
+    user_id = getattr(current_user, "id", None)
+    mobile = getattr(current_user, "mobile_number", None)
+    delivery_partner_id = getattr(current_user, "delivery_partner_id", None)
+
+    print(
+        f"[DELIVERY_AUTH] user_id={user_id} mobile={mobile} "
+        f"role={role} delivery_partner_id={delivery_partner_id}"
+    )
+
+    if role not in DELIVERY_ROLES:
+        raise HTTPException(
+            status_code=403,
             detail=(
-                f"Not allowed for store operations. "
-                f"user_id={user_id}, mobile={mobile}, role={role}, store_id={store_id}"
+                f"Not allowed for delivery operations. "
+                f"user_id={user_id}, mobile={mobile}, role={role}, "
+                f"delivery_partner_id={delivery_partner_id}"
             ),
         )
 
@@ -129,6 +149,7 @@ def _change_order_status(
         "status": order.order_status,
         "payment_status": order.payment_status,
         "store_id": int(order.store_id) if order.store_id else None,
+        "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
     }
 
 
@@ -144,10 +165,7 @@ def _validate_store(db: Session, tenant_id: int, store_id: int):
             LIMIT 1
             """
         ),
-        {
-            "tenant_id": tenant_id,
-            "store_id": store_id,
-        },
+        {"tenant_id": tenant_id, "store_id": store_id},
     ).mappings().first()
 
     if not row:
@@ -156,13 +174,7 @@ def _validate_store(db: Session, tenant_id: int, store_id: int):
     return row
 
 
-def _reserve_store_stock(
-    db: Session,
-    tenant_id: int,
-    store_id: int,
-    product_id: int,
-    quantity: int,
-):
+def _reserve_store_stock(db: Session, tenant_id: int, store_id: int, product_id: int, quantity: int):
     result = db.execute(
         text(
             """
@@ -194,18 +206,11 @@ def _reserve_store_stock(
                 LIMIT 1
                 """
             ),
-            {
-                "tenant_id": tenant_id,
-                "product_id": product_id,
-            },
+            {"tenant_id": tenant_id, "product_id": product_id},
         ).mappings().first()
 
         product_name = product_row["product_name"] if product_row else f"Product {product_id}"
-
-        raise HTTPException(
-            status_code=400,
-            detail=f"Not enough stock for {product_name}",
-        )
+        raise HTTPException(status_code=400, detail=f"Not enough stock for {product_name}")
 
 
 @router.post("/checkout/create-order")
@@ -228,10 +233,7 @@ def create_order(
     delivery_pincode = getattr(payload, "delivery_pincode", None)
 
     if not store_id:
-        raise HTTPException(
-            status_code=400,
-            detail="store_id is required to place order",
-        )
+        raise HTTPException(status_code=400, detail="store_id is required to place order")
 
     _validate_store(db, current_user.tenant_id, store_id)
 
@@ -388,10 +390,7 @@ def current_orders(
     current_user=Depends(get_current_user),
 ):
     rows = (
-        db.query(
-            Order,
-            func.count(OrderItem.id).label("items_count"),
-        )
+        db.query(Order, func.count(OrderItem.id).label("items_count"))
         .outerjoin(OrderItem, OrderItem.order_id == Order.id)
         .filter(
             Order.user_id == current_user.id,
@@ -405,6 +404,7 @@ def current_orders(
                     "ACCEPTED",
                     "PREPARING",
                     "READY",
+                    "OUT_FOR_DELIVERY",
                     "DISPATCHED",
                 ]
             ),
@@ -440,15 +440,9 @@ def order_history(
     current_user=Depends(get_current_user),
 ):
     rows = (
-        db.query(
-            Order,
-            func.count(OrderItem.id).label("items_count"),
-        )
+        db.query(Order, func.count(OrderItem.id).label("items_count"))
         .outerjoin(OrderItem, OrderItem.order_id == Order.id)
-        .filter(
-            Order.user_id == current_user.id,
-            Order.tenant_id == current_user.tenant_id,
-        )
+        .filter(Order.user_id == current_user.id, Order.tenant_id == current_user.tenant_id)
         .group_by(Order.id)
         .order_by(Order.id.desc())
         .all()
@@ -486,10 +480,7 @@ def store_orders(
     _require_store_user(current_user)
 
     query = (
-        db.query(
-            Order,
-            func.count(OrderItem.id).label("items_count"),
-        )
+        db.query(Order, func.count(OrderItem.id).label("items_count"))
         .outerjoin(OrderItem, OrderItem.order_id == Order.id)
         .filter(Order.tenant_id == current_user.tenant_id)
     )
@@ -522,6 +513,7 @@ def store_orders(
             "currency_code": order.currency_code,
             "items_count": int(items_count or 0),
             "store_id": int(order.store_id) if order.store_id else None,
+            "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
             "delivery_pincode": order.delivery_pincode,
             "delivery_address_text": order.delivery_address_text,
             "customer_mobile": order.customer_mobile,
@@ -544,10 +536,7 @@ def store_order_detail(
 
     items = (
         db.query(OrderItem)
-        .filter(
-            OrderItem.order_id == order.id,
-            OrderItem.tenant_id == current_user.tenant_id,
-        )
+        .filter(OrderItem.order_id == order.id, OrderItem.tenant_id == current_user.tenant_id)
         .order_by(OrderItem.id.asc())
         .all()
     )
@@ -565,6 +554,7 @@ def store_order_detail(
         "total_amount": float(order.total_amount),
         "currency_code": order.currency_code,
         "store_id": int(order.store_id) if order.store_id else None,
+        "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
         "delivery_pincode": order.delivery_pincode,
         "delivery_address_text": order.delivery_address_text,
         "customer_mobile": order.customer_mobile,
@@ -589,108 +579,159 @@ def store_order_detail(
 
 
 @router.post("/store/orders/{order_id}/accept")
-def accept_store_order(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    return _change_order_status(
-        db=db,
-        current_user=current_user,
-        order_id=order_id,
-        new_status="ACCEPTED",
-        allowed_from=["PENDING", "CONFIRMED"],
-    )
+def accept_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return _change_order_status(db, current_user, order_id, "ACCEPTED", ["PENDING", "CONFIRMED"])
 
 
 @router.post("/store/orders/{order_id}/reject")
-def reject_store_order(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    return _change_order_status(
-        db=db,
-        current_user=current_user,
-        order_id=order_id,
-        new_status="REJECTED",
-        allowed_from=["PENDING", "CONFIRMED"],
-    )
+def reject_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return _change_order_status(db, current_user, order_id, "REJECTED", ["PENDING", "CONFIRMED"])
 
 
 @router.post("/store/orders/{order_id}/cancel")
-def cancel_store_order(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    return _change_order_status(
-        db=db,
-        current_user=current_user,
-        order_id=order_id,
-        new_status="CANCELLED",
-        allowed_from=["PENDING", "CONFIRMED", "ACCEPTED", "PREPARING"],
-    )
+def cancel_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return _change_order_status(db, current_user, order_id, "CANCELLED", ["PENDING", "CONFIRMED", "ACCEPTED", "PREPARING"])
 
 
 @router.post("/store/orders/{order_id}/preparing")
-def mark_store_order_preparing(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    return _change_order_status(
-        db=db,
-        current_user=current_user,
-        order_id=order_id,
-        new_status="PREPARING",
-        allowed_from=["ACCEPTED"],
-    )
+def mark_store_order_preparing(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return _change_order_status(db, current_user, order_id, "PREPARING", ["ACCEPTED"])
 
 
 @router.post("/store/orders/{order_id}/ready")
-def mark_store_order_ready(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    return _change_order_status(
-        db=db,
-        current_user=current_user,
-        order_id=order_id,
-        new_status="READY",
-        allowed_from=["ACCEPTED", "PREPARING"],
-    )
+def mark_store_order_ready(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return _change_order_status(db, current_user, order_id, "READY", ["ACCEPTED", "PREPARING"])
 
 
+# Kept for old Flutter/store flow, but delivery flow should use OUT_FOR_DELIVERY.
 @router.post("/store/orders/{order_id}/dispatch")
-def dispatch_store_order(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    return _change_order_status(
-        db=db,
-        current_user=current_user,
-        order_id=order_id,
-        new_status="DISPATCHED",
-        allowed_from=["READY"],
-    )
+def dispatch_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return _change_order_status(db, current_user, order_id, "DISPATCHED", ["READY"])
 
 
+# Kept for old Flutter/store flow, but delivery flow should mark delivered.
 @router.post("/store/orders/{order_id}/deliver")
-def deliver_store_order(
+def deliver_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return _change_order_status(db, current_user, order_id, "DELIVERED", ["DISPATCHED", "READY", "OUT_FOR_DELIVERY"])
+
+
+@router.get("/delivery/orders")
+def delivery_orders(
+    status: str | None = "READY",
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    _require_delivery_user(current_user)
+
+    query = db.query(Order).filter(Order.tenant_id == current_user.tenant_id)
+
+    if status:
+        query = query.filter(Order.order_status == status.upper())
+
+    orders = query.order_by(Order.id.desc()).all()
+
+    return [
+        {
+            "order_id": int(order.id),
+            "order_number": order.order_number,
+            "order_status": order.order_status,
+            "status": order.order_status,
+            "payment_status": order.payment_status,
+            "total_amount": float(order.total_amount),
+            "currency_code": order.currency_code,
+            "store_id": int(order.store_id) if order.store_id else None,
+            "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
+            "delivery_pincode": order.delivery_pincode,
+            "delivery_address_text": order.delivery_address_text,
+            "customer_mobile": order.customer_mobile,
+            "customer_email": order.customer_email,
+            "notes": order.notes,
+            "placed_at": order.placed_at.isoformat() if order.placed_at else None,
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+        }
+        for order in orders
+    ]
+
+
+@router.post("/delivery/orders/{order_id}/out-for-delivery")
+def mark_order_out_for_delivery(
     order_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return _change_order_status(
-        db=db,
-        current_user=current_user,
-        order_id=order_id,
-        new_status="DELIVERED",
-        allowed_from=["DISPATCHED", "READY"],
+    _require_delivery_user(current_user)
+
+    order = (
+        db.query(Order)
+        .filter(Order.id == order_id, Order.tenant_id == current_user.tenant_id)
+        .first()
     )
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.order_status != "READY":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order cannot move from {order.order_status} to OUT_FOR_DELIVERY",
+        )
+
+    order.order_status = "OUT_FOR_DELIVERY"
+
+    if getattr(current_user, "delivery_partner_id", None):
+        order.delivery_partner_id = current_user.delivery_partner_id
+
+    db.commit()
+    db.refresh(order)
+
+    return {
+        "message": "Order marked out for delivery",
+        "order_id": int(order.id),
+        "order_number": order.order_number,
+        "order_status": order.order_status,
+        "status": order.order_status,
+        "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
+    }
+
+
+@router.post("/delivery/orders/{order_id}/delivered")
+def mark_order_delivered_by_driver(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    _require_delivery_user(current_user)
+
+    order = (
+        db.query(Order)
+        .filter(Order.id == order_id, Order.tenant_id == current_user.tenant_id)
+        .first()
+    )
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.order_status != "OUT_FOR_DELIVERY":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order cannot move from {order.order_status} to DELIVERED",
+        )
+
+    order.order_status = "DELIVERED"
+
+    if getattr(current_user, "delivery_partner_id", None):
+        order.delivery_partner_id = current_user.delivery_partner_id
+
+    db.commit()
+    db.refresh(order)
+
+    return {
+        "message": "Order delivered",
+        "order_id": int(order.id),
+        "order_number": order.order_number,
+        "order_status": order.order_status,
+        "status": order.order_status,
+    }
 
 
 @router.get("/orders/{order_id}")
@@ -701,11 +742,7 @@ def order_detail(
 ):
     order = (
         db.query(Order)
-        .filter(
-            Order.id == order_id,
-            Order.user_id == current_user.id,
-            Order.tenant_id == current_user.tenant_id,
-        )
+        .filter(Order.id == order_id, Order.user_id == current_user.id, Order.tenant_id == current_user.tenant_id)
         .first()
     )
 
@@ -714,11 +751,7 @@ def order_detail(
 
     items = (
         db.query(OrderItem)
-        .filter(
-            OrderItem.order_id == order.id,
-            OrderItem.user_id == current_user.id,
-            OrderItem.tenant_id == current_user.tenant_id,
-        )
+        .filter(OrderItem.order_id == order.id, OrderItem.user_id == current_user.id, OrderItem.tenant_id == current_user.tenant_id)
         .order_by(OrderItem.id.asc())
         .all()
     )
@@ -736,6 +769,7 @@ def order_detail(
         "total_amount": float(order.total_amount),
         "currency_code": order.currency_code,
         "store_id": int(order.store_id) if order.store_id else None,
+        "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
         "delivery_pincode": order.delivery_pincode,
         "delivery_address_text": order.delivery_address_text,
         "customer_mobile": order.customer_mobile,
@@ -769,4 +803,5 @@ def me(current_user=Depends(get_current_user)):
         "email": current_user.email,
         "role": current_user.role,
         "store_id": int(current_user.store_id) if getattr(current_user, "store_id", None) else None,
+        "delivery_partner_id": int(current_user.delivery_partner_id) if getattr(current_user, "delivery_partner_id", None) else None,
     }
