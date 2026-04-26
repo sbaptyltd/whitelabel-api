@@ -20,7 +20,11 @@ class StorePincode(Base):
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
     pincode = Column(String(20), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(TIMESTAMP, nullable=True, server_default=text("CURRENT_TIMESTAMP"))
+    created_at = Column(
+        TIMESTAMP,
+        nullable=True,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
 
 
 __all__ = ["Store", "StorePincode"]
