@@ -21,7 +21,7 @@ from app.schemas.cart import CreateOrderRequest, ConfirmPaymentRequest
 router = APIRouter(prefix="/api", tags=["orders"])
 
 
-STORE_ROLES = ["store_admin", "store_user", "store_owner", "super_user", "admin"]
+STORE_ROLES = ["store", "store_admin", "store_user", "store_owner", "super_user", "admin"]
 
 VALID_STORE_STATUSES = [
     "PENDING",
