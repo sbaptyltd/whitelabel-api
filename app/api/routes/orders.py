@@ -50,9 +50,23 @@ def _active_cart(db: Session, tenant_id: int, user_id: int):
 
 def _require_store_user(current_user):
     role = getattr(current_user, "role", None)
+    store_id = getattr(current_user, "store_id", None)
+    user_id = getattr(current_user, "id", None)
+    mobile = getattr(current_user, "mobile_number", None)
+
+    print(
+        f"[STORE_AUTH] user_id={user_id} mobile={mobile} "
+        f"role={role} store_id={store_id}"
+    )
 
     if role not in STORE_ROLES:
-        raise HTTPException(status_code=403, detail="Not allowed for store operations")
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Not allowed for store operations. "
+                f"user_id={user_id}, mobile={mobile}, role={role}, store_id={store_id}"
+            ),
+        )
 
     return True
 
@@ -68,7 +82,6 @@ def _store_order_query(db: Session, current_user, order_id: int | None = None):
 
     user_store_id = _get_user_store_id(current_user)
 
-    # super_user/admin can see all tenant orders if no store_id is attached
     if user_store_id is not None:
         query = query.filter(Order.store_id == user_store_id)
 
@@ -384,7 +397,16 @@ def current_orders(
             Order.user_id == current_user.id,
             Order.tenant_id == current_user.tenant_id,
             Order.order_status.in_(
-                ["PENDING", "PAID", "CONFIRMED", "PROCESSING", "ACCEPTED", "PREPARING", "READY", "DISPATCHED"]
+                [
+                    "PENDING",
+                    "PAID",
+                    "CONFIRMED",
+                    "PROCESSING",
+                    "ACCEPTED",
+                    "PREPARING",
+                    "READY",
+                    "DISPATCHED",
+                ]
             ),
         )
         .group_by(Order.id)
@@ -483,11 +505,7 @@ def store_orders(
             raise HTTPException(status_code=400, detail="Invalid order status")
         query = query.filter(Order.order_status == status_upper)
 
-    rows = (
-        query.group_by(Order.id)
-        .order_by(Order.id.desc())
-        .all()
-    )
+    rows = query.group_by(Order.id).order_by(Order.id.desc()).all()
 
     return [
         {
