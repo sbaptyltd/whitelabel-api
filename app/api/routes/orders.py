@@ -2,7 +2,7 @@ from decimal import Decimal
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -33,6 +33,82 @@ def _active_cart(db: Session, tenant_id: int, user_id: int):
     )
 
 
+def _validate_store(db: Session, tenant_id: int, store_id: int):
+    row = db.execute(
+        text(
+            """
+            SELECT id, store_name
+            FROM stores
+            WHERE id = :store_id
+              AND tenant_id = :tenant_id
+              AND is_active = 1
+            LIMIT 1
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "store_id": store_id,
+        },
+    ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=400, detail="Invalid or inactive store")
+
+    return row
+
+
+def _reserve_store_stock(
+    db: Session,
+    tenant_id: int,
+    store_id: int,
+    product_id: int,
+    quantity: int,
+):
+    result = db.execute(
+        text(
+            """
+            UPDATE store_products
+            SET reserved_qty = reserved_qty + :quantity
+            WHERE tenant_id = :tenant_id
+              AND store_id = :store_id
+              AND product_id = :product_id
+              AND is_active = 1
+              AND (stock_qty - reserved_qty) >= :quantity
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "store_id": store_id,
+            "product_id": product_id,
+            "quantity": quantity,
+        },
+    )
+
+    if result.rowcount == 0:
+        product_row = db.execute(
+            text(
+                """
+                SELECT product_name
+                FROM products
+                WHERE id = :product_id
+                  AND tenant_id = :tenant_id
+                LIMIT 1
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "product_id": product_id,
+            },
+        ).mappings().first()
+
+        product_name = product_row["product_name"] if product_row else f"Product {product_id}"
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough stock for {product_name}",
+        )
+
+
 @router.post("/checkout/create-order")
 def create_order(
     payload: CreateOrderRequest,
@@ -49,73 +125,105 @@ def create_order(
     if not items:
         raise HTTPException(status_code=400, detail="Cart is empty")
 
+    store_id = getattr(payload, "store_id", None)
+    delivery_pincode = getattr(payload, "delivery_pincode", None)
+
+    if not store_id:
+        raise HTTPException(
+            status_code=400,
+            detail="store_id is required to place order",
+        )
+
+    _validate_store(db, current_user.tenant_id, store_id)
+
     subtotal = sum(Decimal(i.line_total) for i in items)
 
-    order = Order(
-        tenant_id=current_user.tenant_id,
-        user_id=current_user.id,
-        cart_id=cart.id,
-        order_number=f"ORD{int(datetime.utcnow().timestamp())}",
-        order_status="PENDING",
-        payment_status="PENDING",
-        subtotal_amount=subtotal,
-        tax_amount=Decimal("0.00"),
-        delivery_amount=Decimal("0.00"),
-        discount_amount=Decimal("0.00"),
-        total_amount=subtotal,
-        currency_code="AUD",
-        delivery_address_text=payload.delivery_address_text,
-        customer_mobile=current_user.mobile_number,
-        customer_email=payload.customer_email or current_user.email,
-        notes=payload.notes,
-        placed_at=datetime.utcnow(),
-    )
+    try:
+        for item in items:
+            _reserve_store_stock(
+                db=db,
+                tenant_id=current_user.tenant_id,
+                store_id=store_id,
+                product_id=item.product_id,
+                quantity=item.quantity,
+            )
 
-    db.add(order)
-    db.flush()
+        order = Order(
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            cart_id=cart.id,
+            order_number=f"ORD{int(datetime.utcnow().timestamp())}",
+            order_status="PENDING",
+            payment_status="PENDING",
+            subtotal_amount=subtotal,
+            tax_amount=Decimal("0.00"),
+            delivery_amount=Decimal("0.00"),
+            discount_amount=Decimal("0.00"),
+            total_amount=subtotal,
+            currency_code="AUD",
+            delivery_address_text=payload.delivery_address_text,
+            customer_mobile=current_user.mobile_number,
+            customer_email=payload.customer_email or current_user.email,
+            notes=payload.notes,
+            placed_at=datetime.utcnow(),
+            store_id=store_id,
+            delivery_pincode=delivery_pincode,
+        )
 
-    for item in items:
+        db.add(order)
+        db.flush()
+
+        for item in items:
+            db.add(
+                OrderItem(
+                    order_id=order.id,
+                    tenant_id=current_user.tenant_id,
+                    user_id=current_user.id,
+                    product_id=item.product_id,
+                    product_name_snapshot=item.product_name_snapshot,
+                    product_image_snapshot=item.product_image_snapshot,
+                    sku_snapshot=None,
+                    unit_price_snapshot=item.unit_price_snapshot,
+                    quantity=item.quantity,
+                    line_total=item.line_total,
+                )
+            )
+
         db.add(
-            OrderItem(
-                order_id=order.id,
+            Payment(
                 tenant_id=current_user.tenant_id,
                 user_id=current_user.id,
-                product_id=item.product_id,
-                product_name_snapshot=item.product_name_snapshot,
-                product_image_snapshot=item.product_image_snapshot,
-                sku_snapshot=None,
-                unit_price_snapshot=item.unit_price_snapshot,
-                quantity=item.quantity,
-                line_total=item.line_total,
+                order_id=order.id,
+                payment_provider=payload.payment_provider,
+                amount=subtotal,
+                currency_code="AUD",
+                payment_status="CREATED",
             )
         )
 
-    db.add(
-        Payment(
-            tenant_id=current_user.tenant_id,
-            user_id=current_user.id,
-            order_id=order.id,
-            payment_provider=payload.payment_provider,
-            amount=subtotal,
-            currency_code="AUD",
-            payment_status="CREATED",
-        )
-    )
+        cart.status = "CHECKED_OUT"
 
-    cart.status = "CHECKED_OUT"
+        db.commit()
+        db.refresh(order)
 
-    db.commit()
-    db.refresh(order)
+        return {
+            "order_id": int(order.id),
+            "order_number": order.order_number,
+            "amount": float(order.total_amount),
+            "currency_code": order.currency_code,
+            "payment_provider": payload.payment_provider,
+            "payment_status": "CREATED",
+            "order_status": order.order_status,
+            "store_id": int(order.store_id) if order.store_id else None,
+            "delivery_pincode": order.delivery_pincode,
+        }
 
-    return {
-        "order_id": int(order.id),
-        "order_number": order.order_number,
-        "amount": float(order.total_amount),
-        "currency_code": order.currency_code,
-        "payment_provider": payload.payment_provider,
-        "payment_status": "CREATED",
-        "order_status": "PENDING",
-    }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Order creation failed: {str(e)}")
 
 
 @router.post("/checkout/payment/confirm")
@@ -171,6 +279,7 @@ def confirm_payment(
         "order_id": int(order.id),
         "order_status": order.order_status,
         "payment_status": order.payment_status,
+        "store_id": int(order.store_id) if order.store_id else None,
     }
 
 
@@ -207,6 +316,8 @@ def current_orders(
             "total_amount": float(order.total_amount),
             "currency_code": order.currency_code,
             "items_count": int(items_count or 0),
+            "store_id": int(order.store_id) if order.store_id else None,
+            "delivery_pincode": order.delivery_pincode,
             "placed_at": order.placed_at.isoformat() if order.placed_at else None,
             "created_at": order.created_at.isoformat() if order.created_at else None,
         }
@@ -249,6 +360,8 @@ def order_history(
             "total_amount": float(order.total_amount),
             "currency_code": order.currency_code,
             "items_count": int(items_count or 0),
+            "store_id": int(order.store_id) if order.store_id else None,
+            "delivery_pincode": order.delivery_pincode,
             "placed_at": order.placed_at.isoformat() if order.placed_at else None,
             "created_at": order.created_at.isoformat() if order.created_at else None,
         }
@@ -298,6 +411,8 @@ def order_detail(
         "discount_amount": float(order.discount_amount),
         "total_amount": float(order.total_amount),
         "currency_code": order.currency_code,
+        "store_id": int(order.store_id) if order.store_id else None,
+        "delivery_pincode": order.delivery_pincode,
         "delivery_address_text": order.delivery_address_text,
         "customer_mobile": order.customer_mobile,
         "customer_email": order.customer_email,
@@ -328,4 +443,5 @@ def me(current_user=Depends(get_current_user)):
         "full_name": current_user.full_name,
         "mobile_number": current_user.mobile_number,
         "email": current_user.email,
+        "role": current_user.role,
     }

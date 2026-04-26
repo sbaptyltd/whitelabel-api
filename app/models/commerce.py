@@ -31,17 +31,8 @@ class Tenant(Base):
         nullable=False,
         default="ACTIVE",
     )
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class TenantAppConfig(Base):
@@ -68,17 +59,8 @@ class TenantAppConfig(Base):
     enable_guest_checkout = Column(Boolean, nullable=False, default=False)
     enable_cod = Column(Boolean, nullable=False, default=False)
     enable_online_payment = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class TenantBanner(Base):
@@ -93,17 +75,8 @@ class TenantBanner(Base):
     action_value = Column(String(255), nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class User(Base):
@@ -113,6 +86,8 @@ class User(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     full_name = Column(String(255), nullable=True)
     role = Column(String(50), nullable=False, default="user")
+    store_id = Column(BigInteger, nullable=True)
+    delivery_partner_id = Column(BigInteger, nullable=True)
     mobile_number = Column(String(30), nullable=False)
     email = Column(String(255), nullable=True)
     country_code = Column(String(10), nullable=True)
@@ -122,16 +97,44 @@ class User(Base):
         nullable=False,
         default="ACTIVE",
     )
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
+
+    store_id = Column(BigInteger, nullable=True)
+    delivery_partner_id = Column(BigInteger, nullable=True)
+
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Store(Base):
+    __tablename__ = "stores"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
+    store_name = Column(String(255), nullable=False)
+    store_email = Column(String(255), nullable=False)
+    store_phone = Column(String(30), nullable=True)
+    address = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(TIMESTAMP, nullable=True, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class StoreProduct(Base):
+    __tablename__ = "store_products"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
+    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
+    product_id = Column(BigInteger, ForeignKey("products.id"), nullable=False)
+    stock_qty = Column(Integer, nullable=False, default=0)
+    reserved_qty = Column(Integer, nullable=False, default=0)
+    local_price = Column(Numeric(12, 2), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(TIMESTAMP, nullable=True, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        TIMESTAMP,
+        nullable=True,
+        server_default=text("CURRENT_TIMESTAMP"),
+        server_onupdate=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -149,11 +152,7 @@ class OtpRequest(Base):
     )
     is_used = Column(Boolean, nullable=False, default=False)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 
 class Category(Base):
@@ -167,17 +166,8 @@ class Category(Base):
     image_url = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Product(Base):
@@ -202,17 +192,8 @@ class Product(Base):
     stock_qty = Column(Integer, nullable=False, default=0)
     is_featured = Column(Boolean, nullable=False, default=False)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ProductPrice(Base):
@@ -226,17 +207,8 @@ class ProductPrice(Base):
     start_at = Column(DateTime, nullable=True)
     end_at = Column(DateTime, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Cart(Base):
@@ -250,17 +222,8 @@ class Cart(Base):
         nullable=False,
         default="ACTIVE",
     )
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class CartItem(Base):
@@ -276,18 +239,8 @@ class CartItem(Base):
     unit_price_snapshot = Column(Numeric(12, 2), nullable=False)
     quantity = Column(Integer, nullable=False, default=1)
     line_total = Column(Numeric(12, 2), nullable=False)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
-
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Order(Base):
     __tablename__ = "orders"
@@ -304,6 +257,7 @@ class Order(Base):
             "CONFIRMED",
             "PROCESSING",
             "SHIPPED",
+            "OUT_FOR_DELIVERY",
             "DELIVERED",
             "CANCELLED",
             "FAILED",
@@ -328,19 +282,13 @@ class Order(Base):
     customer_email = Column(String(255), nullable=True)
     notes = Column(Text, nullable=True)
     placed_at = Column(DateTime, nullable=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
 
+    store_id = Column(BigInteger, nullable=True)
+    delivery_pincode = Column(String(20), nullable=True)
+    delivery_partner_id = Column(BigInteger, nullable=True)
 
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 class OrderItem(Base):
     __tablename__ = "order_items"
 
@@ -355,11 +303,7 @@ class OrderItem(Base):
     unit_price_snapshot = Column(Numeric(12, 2), nullable=False)
     quantity = Column(Integer, nullable=False)
     line_total = Column(Numeric(12, 2), nullable=False)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 
 class Payment(Base):
@@ -369,14 +313,11 @@ class Payment(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
     order_id = Column(BigInteger, ForeignKey("orders.id"), nullable=False)
-
     payment_provider = Column(String(100), nullable=False, default="stripe")
     payment_reference = Column(String(255), nullable=True)
     payment_intent_id = Column(String(255), nullable=True, unique=True)
-
     amount = Column(Numeric(12, 2), nullable=False)
     currency_code = Column(String(10), nullable=False, default="AUD")
-
     payment_status = Column(
         Enum(
             "CREATED",
@@ -389,23 +330,12 @@ class Payment(Base):
         nullable=False,
         default="CREATED",
     )
-
     raw_response_json = Column(JSON, nullable=True)
     paid_at = Column(DateTime, nullable=True)
     failure_reason = Column(Text, nullable=True)
     refunded_at = Column(DateTime, nullable=True)
-
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class NotificationTemplate(Base):
@@ -426,17 +356,8 @@ class NotificationTemplate(Base):
     subject = Column(String(255), nullable=True)
     body = Column(Text, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class NotificationLog(Base):
@@ -446,10 +367,7 @@ class NotificationLog(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
     order_id = Column(BigInteger, ForeignKey("orders.id"), nullable=True)
-    channel = Column(
-        Enum("EMAIL", "SMS", name="notification_channel"),
-        nullable=False,
-    )
+    channel = Column(Enum("EMAIL", "SMS", name="notification_channel"), nullable=False)
     recipient = Column(String(255), nullable=False)
     subject = Column(String(255), nullable=True)
     message_body = Column(Text, nullable=False)
@@ -459,14 +377,5 @@ class NotificationLog(Base):
         default="PENDING",
     )
     provider_message_id = Column(String(255), nullable=True)
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

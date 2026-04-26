@@ -11,10 +11,12 @@ from app.api.routes.products import router as products_router
 from app.api.routes.cart import router as cart_router
 from app.api.routes.orders import router as orders_router
 from app.api.routes.stores import router as stores_router
+from app.api.routes.store_orders import router as store_orders_router
 from app.api.routes.payments import router as payments_router
 from app.api.routes.categories_admin import router as categories_admin_router
 from app.api.routes.products_admin import router as products_admin_router
 from app.api.routes.uploads import router as uploads_router
+from app.api.routes.delivery_orders import router as delivery_orders_router
 
 
 
@@ -54,7 +56,9 @@ app.include_router(products_router)
 app.include_router(cart_router)
 app.include_router(orders_router)
 app.include_router(stores_router)
+app.include_router(store_orders_router)
 app.include_router(payments_router)
+app.include_router(delivery_orders_router)
 app.include_router(uploads_router)
 
 

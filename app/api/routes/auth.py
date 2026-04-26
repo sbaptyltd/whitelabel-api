@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.api.deps import get_current_user
 
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.commerce import OtpRequest, Tenant, User
@@ -17,6 +17,7 @@ from app.services.twilio_sms import generate_otp, send_sms_otp, normalize_phone_
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+
 @router.get("/me")
 def me(current_user=Depends(get_current_user)):
     return {
@@ -25,7 +26,11 @@ def me(current_user=Depends(get_current_user)):
         "mobile_number": current_user.mobile_number,
         "email": current_user.email,
         "full_name": current_user.full_name,
-        "role": current_user.role,
+        "role": current_user.role or "user",
+        "store_id": int(current_user.store_id) if current_user.store_id else None,
+        "delivery_partner_id": int(current_user.delivery_partner_id)
+        if current_user.delivery_partner_id
+        else None,
     }
 
 
@@ -108,6 +113,7 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
             full_name=payload.full_name,
             mobile_number=normalized_mobile,
             email=payload.email,
+            role="user",
             is_mobile_verified=True,
             status="ACTIVE",
             created_at=now,
@@ -129,8 +135,17 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
 
     token = create_access_token(str(user.id))
 
-    return VerifyOtpResponse(
-        access_token=token,
-        user_id=int(user.id),
-        tenant_id=int(tenant.id),
-    )
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user_id": int(user.id),
+        "tenant_id": int(tenant.id),
+        "role": user.role or "user",
+        "store_id": int(user.store_id) if user.store_id else None,
+        "delivery_partner_id": int(user.delivery_partner_id)
+        if user.delivery_partner_id
+        else None,
+        "mobile_number": user.mobile_number,
+        "email": user.email,
+        "full_name": user.full_name,
+    }
