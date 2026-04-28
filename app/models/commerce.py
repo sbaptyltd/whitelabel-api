@@ -28,7 +28,6 @@ from google.auth.transport.requests import Request
 from google.cloud import storage
 
 from app.db.session import get_db
-from app.models.commerce import Category, Product, Tenant
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 storage_client = storage.Client()
