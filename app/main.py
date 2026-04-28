@@ -17,6 +17,7 @@ from app.api.routes.categories_admin import router as categories_admin_router
 from app.api.routes.products_admin import router as products_admin_router
 from app.api.routes.uploads import router as uploads_router
 from app.api.routes.delivery_orders import router as delivery_orders_router
+from app.api.routes.device_token import router as device_token_router
 
 
 
@@ -60,6 +61,7 @@ app.include_router(store_orders_router)
 app.include_router(payments_router)
 app.include_router(delivery_orders_router)
 app.include_router(uploads_router)
+app.include_router(device_token_router)
 
 
 
