@@ -10,3 +10,4 @@ stripe
 google-cloud-storage
 google-auth
 python-multipart
+firebase-admin

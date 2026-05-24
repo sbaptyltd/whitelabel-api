@@ -17,13 +17,20 @@ class VerifyOtpRequest(BaseModel):
     tenant_code: str
     mobile_number: str
     otp_code: str
+
     full_name: Optional[str] = None
     email: Optional[str] = None
+
+    # NEW
+    fcm_token: Optional[str] = None
+    device_type: Optional[str] = None
+    device_id: Optional[str] = None
 
 
 class VerifyOtpResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
     user_id: int
     tenant_id: int
 

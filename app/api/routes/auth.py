@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta
+import hashlib
+
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -16,6 +19,13 @@ from app.services.security import create_access_token
 from app.services.twilio_sms import generate_otp, send_sms_otp, normalize_phone_number
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+APP_REVIEW_MOBILE = "+61400000000"
+APP_REVIEW_OTP = "123456"
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 @router.get("/me")
@@ -45,6 +55,13 @@ def request_otp(payload: RequestOtpRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     normalized_mobile = normalize_phone_number(payload.mobile_number)
+
+    if normalized_mobile == APP_REVIEW_MOBILE:
+        return RequestOtpResponse(
+            message="App Review OTP is 123456",
+            otp_sent=True,
+        )
+
     otp_code = generate_otp()
 
     try:
@@ -84,36 +101,44 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     normalized_mobile = normalize_phone_number(payload.mobile_number)
+    now = datetime.utcnow()
 
-    otp_row = db.query(OtpRequest).filter(
-        OtpRequest.tenant_id == tenant.id,
-        OtpRequest.mobile_number == normalized_mobile,
-        OtpRequest.otp_code == payload.otp_code.strip(),
-        OtpRequest.is_used == False,
-    ).order_by(OtpRequest.id.desc()).first()
+    is_app_review_login = (
+        normalized_mobile == APP_REVIEW_MOBILE
+        and payload.otp_code.strip() == APP_REVIEW_OTP
+    )
 
-    if not otp_row:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
+    if not is_app_review_login:
+        otp_row = db.query(OtpRequest).filter(
+            OtpRequest.tenant_id == tenant.id,
+            OtpRequest.mobile_number == normalized_mobile,
+            OtpRequest.otp_code == payload.otp_code.strip(),
+            OtpRequest.is_used == False,
+        ).order_by(OtpRequest.id.desc()).first()
 
-    if otp_row.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="OTP expired")
+        if not otp_row:
+            raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    otp_row.is_used = True
+        if otp_row.expires_at < now:
+            raise HTTPException(status_code=400, detail="OTP expired")
+
+        otp_row.is_used = True
+    else:
+        print("[APP_REVIEW_LOGIN] Fixed OTP login used for Apple review")
 
     user = db.query(User).filter(
         User.tenant_id == tenant.id,
         User.mobile_number == normalized_mobile,
     ).first()
 
-    now = datetime.utcnow()
-
     if not user:
         user = User(
             tenant_id=tenant.id,
-            full_name=payload.full_name,
+            full_name=payload.full_name or "Apple App Review",
             mobile_number=normalized_mobile,
-            email=payload.email,
+            email=payload.email or "appreview@desidash.com.au",
             role="user",
+            store_id=2,
             is_mobile_verified=True,
             status="ACTIVE",
             created_at=now,
@@ -123,17 +148,47 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
         db.flush()
     else:
         user.is_mobile_verified = True
+        user.status = "ACTIVE"
         user.updated_at = now
 
-        if payload.full_name:
-            user.full_name = payload.full_name
+        if is_app_review_login:
+            user.full_name = user.full_name or "Apple App Review"
+            user.email = user.email or "appreview@desidash.com.au"
+            user.role = "user"
+            user.store_id = user.store_id or 2
+        else:
+            if payload.full_name:
+                user.full_name = payload.full_name
 
-        if payload.email:
-            user.email = payload.email
-
-    db.commit()
+            if payload.email:
+                user.email = payload.email
 
     token = create_access_token(str(user.id))
+
+    expires_at = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+    db.execute(
+        text(
+            """
+            INSERT INTO user_sessions
+                (tenant_id, user_id, jwt_token_hash, device_type, device_id, fcm_token, expires_at, created_at)
+            VALUES
+                (:tenant_id, :user_id, :jwt_token_hash, :device_type, :device_id, :fcm_token, :expires_at, :created_at)
+            """
+        ),
+        {
+            "tenant_id": tenant.id,
+            "user_id": user.id,
+            "jwt_token_hash": _hash_token(token),
+            "device_type": payload.device_type,
+            "device_id": payload.device_id,
+            "fcm_token": payload.fcm_token,
+            "expires_at": expires_at,
+            "created_at": now,
+        },
+    )
+
+    db.commit()
 
     return {
         "access_token": token,

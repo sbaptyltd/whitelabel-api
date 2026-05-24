@@ -160,6 +160,47 @@ class User(Base):
     )
 
 
+class UserAddress(Base):
+    __tablename__ = "user_addresses"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
+
+    customer_email = Column(String(150), nullable=True)
+    phone = Column(String(30), nullable=True)
+
+    address_type = Column(
+        Enum("HOME", "WORK", "OTHER", name="user_address_type_enum"),
+        nullable=False,
+        default="HOME",
+    )
+
+    line1 = Column(String(255), nullable=False)
+    line2 = Column(String(255), nullable=True)
+    suburb = Column(String(100), nullable=True)
+    city = Column(String(100), nullable=True)
+    state = Column(String(100), nullable=True)
+    postcode = Column(String(20), nullable=True)
+    country = Column(String(100), nullable=True)
+
+    is_default = Column(Boolean, nullable=False, default=False)
+
+    created_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    updated_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        server_onupdate=text("CURRENT_TIMESTAMP"),
+    )
+
+
 class Store(Base):
     __tablename__ = "stores"
 
@@ -563,6 +604,9 @@ class NotificationTemplate(Base):
     template_type = Column(
         Enum(
             "EMAIL_ORDER_CONFIRMATION",
+            "EMAIL_STORE_NEW_ORDER",
+            "EMAIL_DELIVERY_READY",
+            "EMAIL_CUSTOMER_INVOICE",
             "SMS_ORDER_CONFIRMATION",
             "OTP_SMS",
             "OTP_EMAIL",
@@ -600,7 +644,7 @@ class NotificationLog(Base):
     order_id = Column(BigInteger, ForeignKey("orders.id"), nullable=True)
 
     channel = Column(
-        Enum("EMAIL", "SMS", name="notification_channel"),
+        Enum("EMAIL", "SMS", "PUSH", name="notification_channel"),
         nullable=False,
     )
 

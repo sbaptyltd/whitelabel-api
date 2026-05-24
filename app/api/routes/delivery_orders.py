@@ -4,7 +4,13 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.commerce import Order, OrderItem
+from app.models.commerce import AppNotification, Order, OrderItem
+
+try:
+    from app.services.push_notifications import send_push_notification
+except Exception:
+    send_push_notification = None
+
 
 router = APIRouter(prefix="/api/delivery", tags=["delivery-orders"])
 
@@ -18,6 +24,61 @@ def _require_delivery_user(current_user):
             status_code=400,
             detail="Delivery user has no delivery_partner_id assigned",
         )
+
+
+def _notify_customer_order_delivered(
+    db: Session,
+    order: Order,
+):
+    title = "Order Delivered"
+    message = f"Your order {order.order_number} has been delivered."
+
+    db.add(
+        AppNotification(
+            tenant_id=order.tenant_id,
+            user_id=order.user_id,
+            order_id=order.id,
+            title=title,
+            message=message,
+            notification_type="order_delivered",
+            is_read=False,
+        )
+    )
+
+    if send_push_notification:
+        try:
+            send_push_notification(
+                db=db,
+                user_id=order.user_id,
+                title=title,
+                body=message,
+            )
+        except Exception as e:
+            print(f"[PUSH_NOTIFICATION_FAILED] user_id={order.user_id} error={e}")
+
+
+def _get_delivery_order_or_404(
+    db: Session,
+    current_user,
+    order_id: int,
+):
+    order = (
+        db.query(Order)
+        .filter(
+            Order.id == order_id,
+            Order.tenant_id == current_user.tenant_id,
+            Order.delivery_partner_id == current_user.delivery_partner_id,
+        )
+        .first()
+    )
+
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found for this delivery user",
+        )
+
+    return order
 
 
 @router.get("/orders")
@@ -36,7 +97,7 @@ def get_delivery_orders(
         .filter(
             Order.tenant_id == current_user.tenant_id,
             Order.delivery_partner_id == current_user.delivery_partner_id,
-            Order.order_status.in_(["SHIPPED", "OUT_FOR_DELIVERY"]),
+            Order.order_status.in_(["READY", "SHIPPED", "OUT_FOR_DELIVERY"]),
         )
         .group_by(Order.id)
         .order_by(Order.id.desc())
@@ -76,18 +137,11 @@ def get_delivery_order_detail(
 ):
     _require_delivery_user(current_user)
 
-    order = (
-        db.query(Order)
-        .filter(
-            Order.id == order_id,
-            Order.tenant_id == current_user.tenant_id,
-            Order.delivery_partner_id == current_user.delivery_partner_id,
-        )
-        .first()
+    order = _get_delivery_order_or_404(
+        db=db,
+        current_user=current_user,
+        order_id=order_id,
     )
-
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found for this delivery user")
 
     items = (
         db.query(OrderItem)
@@ -146,20 +200,13 @@ def mark_out_for_delivery(
 ):
     _require_delivery_user(current_user)
 
-    order = (
-        db.query(Order)
-        .filter(
-            Order.id == order_id,
-            Order.tenant_id == current_user.tenant_id,
-            Order.delivery_partner_id == current_user.delivery_partner_id,
-        )
-        .first()
+    order = _get_delivery_order_or_404(
+        db=db,
+        current_user=current_user,
+        order_id=order_id,
     )
 
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found for this delivery user")
-
-    if order.order_status != "SHIPPED":
+    if order.order_status not in ["READY", "SHIPPED"]:
         raise HTTPException(
             status_code=400,
             detail="Only READY/SHIPPED orders can be marked out for delivery",
@@ -167,6 +214,7 @@ def mark_out_for_delivery(
 
     order.order_status = "OUT_FOR_DELIVERY"
     db.commit()
+    db.refresh(order)
 
     return {
         "message": "Order marked out for delivery",
@@ -184,18 +232,11 @@ def mark_delivered(
 ):
     _require_delivery_user(current_user)
 
-    order = (
-        db.query(Order)
-        .filter(
-            Order.id == order_id,
-            Order.tenant_id == current_user.tenant_id,
-            Order.delivery_partner_id == current_user.delivery_partner_id,
-        )
-        .first()
+    order = _get_delivery_order_or_404(
+        db=db,
+        current_user=current_user,
+        order_id=order_id,
     )
-
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found for this delivery user")
 
     if order.order_status != "OUT_FOR_DELIVERY":
         raise HTTPException(
@@ -204,7 +245,11 @@ def mark_delivered(
         )
 
     order.order_status = "DELIVERED"
+
+    _notify_customer_order_delivered(db, order)
+
     db.commit()
+    db.refresh(order)
 
     return {
         "message": "Order delivered",
