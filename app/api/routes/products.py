@@ -34,7 +34,6 @@ def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
         credentials, _ = google.auth.default(
             scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
-
         credentials.refresh(Request())
 
         service_account_email = os.getenv(
@@ -53,6 +52,31 @@ def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
     except Exception as e:
         print(f"Signed URL failed for {gs_uri}: {e}")
         return None
+
+
+def _public_url_from_gs_uri(gs_uri: str | None) -> str | None:
+    if not gs_uri:
+        return None
+
+    if not gs_uri.startswith("gs://"):
+        return gs_uri
+
+    try:
+        path = gs_uri.replace("gs://", "", 1)
+        bucket_name, blob_name = path.split("/", 1)
+        return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
+    except Exception as e:
+        print(f"Public URL conversion failed for {gs_uri}: {e}")
+        return None
+
+
+def _image_url_from_gs_uri(gs_uri: str | None) -> str | None:
+    use_public = os.getenv("GCS_PUBLIC_IMAGES", "false").lower() == "true"
+
+    if use_public:
+        return _public_url_from_gs_uri(gs_uri)
+
+    return _signed_url_from_gs_uri(gs_uri)
 
 
 def _get_tenant_by_code(db: Session, tenant_code: str):
@@ -80,7 +104,7 @@ def _to_product_dict(
     reserved = reserved_qty if reserved_qty is not None else 0
     available_stock = max((stock_qty or 0) - (reserved or 0), 0)
 
-    image_url = _signed_url_from_gs_uri(product.image_url)
+    image_url = _image_url_from_gs_uri(product.image_url)
 
     return {
         "id": int(product.id),
@@ -120,7 +144,7 @@ def categories(
             Category.tenant_id == tenant.id,
             Category.is_active == True,
         )
-        .order_by(Category.sort_order.asc(), Category.id.asc())
+        .order_by(Category.category_name.asc(), Category.id.asc())
         .all()
     )
 
@@ -130,7 +154,7 @@ def categories(
             "name": r.category_name,
             "category_name": r.category_name,
             "slug": r.category_slug,
-            "image_url": r.image_url,
+            "image_url": _image_url_from_gs_uri(r.image_url),
         }
         for r in rows
     ]
@@ -150,7 +174,6 @@ def products(
     tenant = _get_tenant_by_code(db, tenant_code)
     offset = (page - 1) * page_size
 
-    # New store-wise inventory path
     if store_id is not None:
         where_clauses = [
             "p.tenant_id = :tenant_id",
@@ -190,70 +213,68 @@ def products(
 
         where_sql = " AND ".join(where_clauses)
 
-        count_sql = text(
-            f"""
-            SELECT COUNT(*) AS total
-            FROM products p
-            JOIN store_products sp
-              ON sp.product_id = p.id
-             AND sp.tenant_id = p.tenant_id
-            LEFT JOIN categories c
-              ON c.id = p.category_id
-            WHERE {where_sql}
-            """
-        )
+        total = db.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS total
+                FROM products p
+                JOIN store_products sp
+                  ON sp.product_id = p.id
+                 AND sp.tenant_id = p.tenant_id
+                LEFT JOIN categories c
+                  ON c.id = p.category_id
+                WHERE {where_sql}
+                """
+            ),
+            params,
+        ).scalar() or 0
 
-        total = db.execute(count_sql, params).scalar() or 0
-
-        data_sql = text(
-            f"""
-            SELECT
-                p.id,
-                p.tenant_id,
-                p.category_id,
-                c.category_name,
-                p.product_name,
-                p.brand_name,
-                p.product_slug,
-                p.short_description,
-                p.long_description,
-                p.sku,
-                p.barcode,
-                p.image_url,
-                p.gallery_json,
-                p.base_price,
-                p.sale_price,
-                p.currency_code,
-                p.is_featured,
-                p.is_active,
-                sp.stock_qty,
-                sp.reserved_qty,
-                sp.local_price,
-                (sp.stock_qty - sp.reserved_qty) AS available_stock
-            FROM products p
-            JOIN store_products sp
-              ON sp.product_id = p.id
-             AND sp.tenant_id = p.tenant_id
-            LEFT JOIN categories c
-              ON c.id = p.category_id
-            WHERE {where_sql}
-            ORDER BY p.id DESC
-            LIMIT :limit OFFSET :offset
-            """
-        )
-
-        rows = db.execute(data_sql, params).mappings().all()
+        rows = db.execute(
+            text(
+                f"""
+                SELECT
+                    p.id,
+                    p.tenant_id,
+                    p.category_id,
+                    c.category_name,
+                    p.product_name,
+                    p.brand_name,
+                    p.product_slug,
+                    p.short_description,
+                    p.long_description,
+                    p.sku,
+                    p.barcode,
+                    p.image_url,
+                    p.gallery_json,
+                    p.base_price,
+                    p.sale_price,
+                    p.currency_code,
+                    p.is_featured,
+                    p.is_active,
+                    sp.stock_qty,
+                    sp.reserved_qty,
+                    sp.local_price,
+                    (sp.stock_qty - sp.reserved_qty) AS available_stock
+                FROM products p
+                JOIN store_products sp
+                  ON sp.product_id = p.id
+                 AND sp.tenant_id = p.tenant_id
+                LEFT JOIN categories c
+                  ON c.id = p.category_id
+                WHERE {where_sql}
+                ORDER BY p.id DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            params,
+        ).mappings().all()
 
         items = []
         for r in rows:
-            image_url = _signed_url_from_gs_uri(r["image_url"])
+            image_url = _image_url_from_gs_uri(r["image_url"])
 
-            default_price = (
-                r["sale_price"] if r["sale_price"] is not None else r["base_price"]
-            )
-            final_price = (
-                r["local_price"] if r["local_price"] is not None else default_price
-            )
+            default_price = r["sale_price"] if r["sale_price"] is not None else r["base_price"]
+            final_price = r["local_price"] if r["local_price"] is not None else default_price
 
             items.append(
                 {
@@ -290,7 +311,6 @@ def products(
             "store_id": store_id,
         }
 
-    # Old fallback path when store_id is not passed
     query = (
         db.query(Product, Category.category_name)
         .outerjoin(Category, Product.category_id == Category.id)
@@ -348,45 +368,43 @@ def product_by_id(
     tenant = _get_tenant_by_code(db, tenant_code)
 
     if store_id is not None:
-        sql = text(
-            """
-            SELECT
-                p.id,
-                p.tenant_id,
-                p.category_id,
-                c.category_name,
-                p.product_name,
-                p.brand_name,
-                p.product_slug,
-                p.short_description,
-                p.long_description,
-                p.image_url,
-                p.base_price,
-                p.sale_price,
-                p.currency_code,
-                p.is_featured,
-                p.is_active,
-                sp.stock_qty,
-                sp.reserved_qty,
-                sp.local_price,
-                (sp.stock_qty - sp.reserved_qty) AS available_stock
-            FROM products p
-            JOIN store_products sp
-              ON sp.product_id = p.id
-             AND sp.tenant_id = p.tenant_id
-            LEFT JOIN categories c
-              ON c.id = p.category_id
-            WHERE p.id = :product_id
-              AND p.tenant_id = :tenant_id
-              AND p.is_active = 1
-              AND sp.store_id = :store_id
-              AND sp.is_active = 1
-            LIMIT 1
-            """
-        )
-
         r = db.execute(
-            sql,
+            text(
+                """
+                SELECT
+                    p.id,
+                    p.tenant_id,
+                    p.category_id,
+                    c.category_name,
+                    p.product_name,
+                    p.brand_name,
+                    p.product_slug,
+                    p.short_description,
+                    p.long_description,
+                    p.image_url,
+                    p.base_price,
+                    p.sale_price,
+                    p.currency_code,
+                    p.is_featured,
+                    p.is_active,
+                    sp.stock_qty,
+                    sp.reserved_qty,
+                    sp.local_price,
+                    (sp.stock_qty - sp.reserved_qty) AS available_stock
+                FROM products p
+                JOIN store_products sp
+                  ON sp.product_id = p.id
+                 AND sp.tenant_id = p.tenant_id
+                LEFT JOIN categories c
+                  ON c.id = p.category_id
+                WHERE p.id = :product_id
+                  AND p.tenant_id = :tenant_id
+                  AND p.is_active = 1
+                  AND sp.store_id = :store_id
+                  AND sp.is_active = 1
+                LIMIT 1
+                """
+            ),
             {
                 "product_id": product_id,
                 "tenant_id": tenant.id,
@@ -397,7 +415,7 @@ def product_by_id(
         if not r:
             raise HTTPException(status_code=404, detail="Product not found for this store")
 
-        image_url = _signed_url_from_gs_uri(r["image_url"])
+        image_url = _image_url_from_gs_uri(r["image_url"])
         default_price = r["sale_price"] if r["sale_price"] is not None else r["base_price"]
         final_price = r["local_price"] if r["local_price"] is not None else default_price
 
