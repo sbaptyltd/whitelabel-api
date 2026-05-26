@@ -1,3 +1,4 @@
+from app.api import incidents
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -56,6 +57,7 @@ app.include_router(products_admin_router)
 app.include_router(products_router)
 app.include_router(cart_router)
 app.include_router(orders_router)
+app.include_router(incidents.router)
 app.include_router(stores_router)
 app.include_router(store_orders_router)
 app.include_router(payments_router)

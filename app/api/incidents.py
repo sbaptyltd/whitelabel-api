@@ -15,7 +15,9 @@ from app.services.email_notifications import (
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 
-SUPPORT_EMAIL = "contact@synergybits.com.au"
+SUPPORT_EMAILS = [
+    "contact@synergybits.com.au"
+]
 
 
 class CreateIncidentRequest(BaseModel):
@@ -107,7 +109,7 @@ def create_incident(
         <p><strong>Total:</strong> {_html_escape(order.total_amount)} {_html_escape(order.currency_code)}</p>
         """
 
-    html_body = _base_layout(
+    support_html = _base_layout(
         f"New Customer Incident {incident_number}",
         f"""
         <p>A customer has submitted a Contact Us request.</p>
@@ -130,15 +132,47 @@ def create_incident(
         """,
     )
 
-    _send_and_log(
-        db=db,
-        tenant_id=current_user.tenant_id,
-        user_id=current_user.id,
-        order_id=payload.order_id,
-        recipient=SUPPORT_EMAIL,
-        subject=f"Customer Incident {incident_number}: {subject}",
-        html_body=html_body,
+    customer_html = _base_layout(
+        f"Support request received - {incident_number}",
+        f"""
+        <p>Hello {_html_escape(current_user.full_name or "Customer")},</p>
+
+        <p>Your support request has been received successfully.</p>
+
+        <p><strong>Incident Number:</strong> {_html_escape(incident_number)}</p>
+        <p><strong>Status:</strong> OPEN</p>
+        <p><strong>SLA:</strong> Our team will respond within 1 day.</p>
+
+        <h3>Related Order</h3>
+        {order_info if order_info else "<p>No order selected.</p>"}
+
+        <h3>Subject</h3>
+        <p>{_html_escape(subject)}</p>
+
+        <h3>Your Message</h3>
+        <p>{_html_escape(message)}</p>
+
+        <p>You can reply to this email to continue the conversation with DesiDash support.</p>
+        """,
     )
+
+    recipient_emails = set(SUPPORT_EMAILS)
+
+    if current_user.email:
+        recipient_emails.add(current_user.email)
+
+    for recipient_email in recipient_emails:
+        is_customer = current_user.email and recipient_email == current_user.email
+
+        _send_and_log(
+            db=db,
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.id,
+            order_id=payload.order_id,
+            recipient=recipient_email,
+            subject=f"Customer Incident {incident_number}: {subject}",
+            html_body=customer_html if is_customer else support_html,
+        )
 
     db.commit()
 
