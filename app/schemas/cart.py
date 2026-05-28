@@ -19,6 +19,8 @@ class RemoveCartItemRequest(BaseModel):
 class CreateOrderRequest(BaseModel):
     store_id: int
     delivery_pincode: Optional[str] = None
+    delivery_date: Optional[str] = None
+    collection_date: Optional[str] = None
     delivery_address_text: Optional[str] = None
     customer_email: Optional[str] = None
     notes: Optional[str] = None

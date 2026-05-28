@@ -65,6 +65,8 @@ VALID_STORE_STATUSES = [
 class CreatePaymentIntentFromCartRequest(BaseModel):
     store_id: int
     delivery_pincode: str | None = None
+    delivery_date: str | None = None
+    collection_date: str | None = None
 
 
 class CreateOrderAfterPaymentRequest(BaseModel):
@@ -75,6 +77,8 @@ class CreateOrderAfterPaymentRequest(BaseModel):
     notes: str | None = ""
     payment_provider: str = "stripe"
     payment_intent_id: str
+    delivery_date: str | None = None
+    collection_date: str | None = None
 
 
 
@@ -232,6 +236,94 @@ def _order_platform_fee_value(db: Session, order: Order) -> float:
 
     return float(row["platform_fee_amount"] or 0)
 
+
+
+
+def _clean_order_date(value):
+    """
+    Accepts yyyy-MM-dd from Flutter and returns it unchanged for MySQL DATE.
+    Empty/invalid values become None so order creation does not crash.
+    """
+    if value is None:
+        return None
+
+    value = str(value).strip()
+    if not value:
+        return None
+
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+        return value
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Date must be in yyyy-MM-dd format",
+        )
+
+
+def _order_date_values(db: Session, order: Order) -> dict:
+    """
+    Reads delivery_date and collection_date safely even if the SQLAlchemy
+    Order model is older and does not expose these columns yet.
+    """
+    delivery_date = getattr(order, "delivery_date", None)
+    collection_date = getattr(order, "collection_date", None)
+
+    if delivery_date is not None or collection_date is not None:
+        return {
+            "delivery_date": delivery_date.isoformat() if hasattr(delivery_date, "isoformat") else delivery_date,
+            "collection_date": collection_date.isoformat() if hasattr(collection_date, "isoformat") else collection_date,
+        }
+
+    row = db.execute(
+        text(
+            """
+            SELECT delivery_date, collection_date
+            FROM orders
+            WHERE id = :order_id
+            LIMIT 1
+            """
+        ),
+        {"order_id": order.id},
+    ).mappings().first()
+
+    if not row:
+        return {"delivery_date": None, "collection_date": None}
+
+    d = row["delivery_date"]
+    c = row["collection_date"]
+
+    return {
+        "delivery_date": d.isoformat() if hasattr(d, "isoformat") else d,
+        "collection_date": c.isoformat() if hasattr(c, "isoformat") else c,
+    }
+
+
+def _update_order_extra_fields(
+    db: Session,
+    order_id: int,
+    platform_fee_amount: Decimal,
+    delivery_date: str | None = None,
+    collection_date: str | None = None,
+):
+    db.execute(
+        text(
+            """
+            UPDATE orders
+            SET
+                platform_fee_amount = :platform_fee_amount,
+                delivery_date = :delivery_date,
+                collection_date = :collection_date
+            WHERE id = :order_id
+            """
+        ),
+        {
+            "platform_fee_amount": platform_fee_amount,
+            "delivery_date": delivery_date,
+            "collection_date": collection_date,
+            "order_id": order_id,
+        },
+    )
 
 def _create_app_notification(
     db: Session,
@@ -659,6 +751,8 @@ def get_last_checkout_details(
             "customer_email": getattr(current_user, "email", None) or "",
             "customer_mobile": getattr(current_user, "mobile_number", None) or "",
             "delivery_pincode": "",
+            "delivery_date": None,
+            "collection_date": None,
         }
 
     return {
@@ -666,6 +760,8 @@ def get_last_checkout_details(
         "customer_email": order.customer_email or getattr(current_user, "email", None) or "",
         "customer_mobile": order.customer_mobile or getattr(current_user, "mobile_number", None) or "",
         "delivery_pincode": order.delivery_pincode or "",
+        "delivery_date": _order_date_values(db, order)["delivery_date"],
+        "collection_date": _order_date_values(db, order)["collection_date"],
     }
 
 
@@ -708,6 +804,8 @@ def create_payment_intent_from_cart(
         "cart_id": str(cart.id),
         "store_id": str(payload.store_id),
         "delivery_pincode": payload.delivery_pincode or "",
+        "delivery_date": payload.delivery_date or "",
+        "collection_date": payload.collection_date or "",
         "subtotal_amount": str(fees["subtotal_amount"]),
         "platform_fee_amount": str(fees["platform_fee_amount"]),
         "delivery_amount": str(fees["delivery_amount"]),
@@ -771,6 +869,8 @@ def create_payment_intent_from_cart(
             "currency_code": "AUD",
             "cart_id": int(cart.id),
             "store_id": int(payload.store_id),
+            "delivery_date": payload.delivery_date,
+            "collection_date": payload.collection_date,
             "tenant_id": int(current_user.tenant_id),
             "user_id": int(current_user.id),
         }
@@ -883,6 +983,8 @@ def create_order_after_payment(
                 "total_amount": float(existing_order.total_amount),
                 "store_id": int(existing_order.store_id) if existing_order.store_id else None,
                 "delivery_pincode": existing_order.delivery_pincode,
+                "delivery_date": _order_date_values(db, existing_order)["delivery_date"],
+                "collection_date": _order_date_values(db, existing_order)["collection_date"],
                 "delivery_address_text": existing_order.delivery_address_text,
                 "customer_mobile": existing_order.customer_mobile,
                 "customer_email": existing_order.customer_email,
@@ -939,6 +1041,9 @@ def create_order_after_payment(
                 quantity=item.quantity,
             )
 
+        delivery_date = _clean_order_date(payload.delivery_date or metadata.get("delivery_date"))
+        collection_date = _clean_order_date(payload.collection_date or metadata.get("collection_date"))
+
         order = Order(
             tenant_id=cart.tenant_id,
             user_id=cart.user_id,
@@ -966,18 +1071,12 @@ def create_order_after_payment(
         db.add(order)
         db.flush()
 
-        db.execute(
-            text(
-                """
-                UPDATE orders
-                SET platform_fee_amount = :platform_fee_amount
-                WHERE id = :order_id
-                """
-            ),
-            {
-                "platform_fee_amount": fees["platform_fee_amount"],
-                "order_id": order.id,
-            },
+        _update_order_extra_fields(
+            db=db,
+            order_id=order.id,
+            platform_fee_amount=fees["platform_fee_amount"],
+            delivery_date=delivery_date,
+            collection_date=collection_date,
         )
 
         for item in items:
@@ -1039,6 +1138,8 @@ def create_order_after_payment(
             "currency_code": order.currency_code,
             "store_id": int(order.store_id) if order.store_id else None,
             "delivery_pincode": order.delivery_pincode,
+            "delivery_date": _order_date_values(db, order)["delivery_date"],
+            "collection_date": _order_date_values(db, order)["collection_date"],
             "delivery_address_text": order.delivery_address_text,
             "customer_mobile": order.customer_mobile,
             "customer_email": order.customer_email,
@@ -1076,6 +1177,8 @@ def create_order(
 
     store_id = getattr(payload, "store_id", None)
     delivery_pincode = getattr(payload, "delivery_pincode", None)
+    delivery_date = _clean_order_date(getattr(payload, "delivery_date", None))
+    collection_date = _clean_order_date(getattr(payload, "collection_date", None))
 
     if not store_id:
         raise HTTPException(status_code=400, detail="store_id is required to place order")
@@ -1122,18 +1225,12 @@ def create_order(
         db.add(order)
         db.flush()
 
-        db.execute(
-            text(
-                """
-                UPDATE orders
-                SET platform_fee_amount = :platform_fee_amount
-                WHERE id = :order_id
-                """
-            ),
-            {
-                "platform_fee_amount": fees["platform_fee_amount"],
-                "order_id": order.id,
-            },
+        _update_order_extra_fields(
+            db=db,
+            order_id=order.id,
+            platform_fee_amount=fees["platform_fee_amount"],
+            delivery_date=delivery_date,
+            collection_date=collection_date,
         )
 
         #_notify_store_users_new_order(db, order)
@@ -1187,6 +1284,8 @@ def create_order(
             "order_status": order.order_status,
             "store_id": int(order.store_id) if order.store_id else None,
             "delivery_pincode": order.delivery_pincode,
+            "delivery_date": _order_date_values(db, order)["delivery_date"],
+            "collection_date": _order_date_values(db, order)["collection_date"],
         }
 
     except HTTPException:
@@ -1287,6 +1386,8 @@ def current_orders(
             "items_count": int(items_count or 0),
             "store_id": int(order.store_id) if order.store_id else None,
             "delivery_pincode": order.delivery_pincode,
+            "delivery_date": _order_date_values(db, order)["delivery_date"],
+            "collection_date": _order_date_values(db, order)["collection_date"],
             "placed_at": order.placed_at.isoformat() if order.placed_at else None,
             "created_at": order.created_at.isoformat() if order.created_at else None,
         }
@@ -1326,6 +1427,8 @@ def order_history(
             "items_count": int(items_count or 0),
             "store_id": int(order.store_id) if order.store_id else None,
             "delivery_pincode": order.delivery_pincode,
+            "delivery_date": _order_date_values(db, order)["delivery_date"],
+            "collection_date": _order_date_values(db, order)["collection_date"],
             "placed_at": order.placed_at.isoformat() if order.placed_at else None,
             "created_at": order.created_at.isoformat() if order.created_at else None,
         }
@@ -1378,6 +1481,8 @@ def store_orders(
             "store_id": int(order.store_id) if order.store_id else None,
             "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
             "delivery_pincode": order.delivery_pincode,
+            "delivery_date": _order_date_values(db, order)["delivery_date"],
+            "collection_date": _order_date_values(db, order)["collection_date"],
             "delivery_address_text": order.delivery_address_text,
             "customer_mobile": order.customer_mobile,
             "customer_email": order.customer_email,
@@ -1420,6 +1525,8 @@ def store_order_detail(
         "store_id": int(order.store_id) if order.store_id else None,
         "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
         "delivery_pincode": order.delivery_pincode,
+        "delivery_date": _order_date_values(db, order)["delivery_date"],
+        "collection_date": _order_date_values(db, order)["collection_date"],
         "delivery_address_text": order.delivery_address_text,
         "customer_mobile": order.customer_mobile,
         "customer_email": order.customer_email,
@@ -1564,6 +1671,8 @@ def delivery_orders(
             "store_id": int(order.store_id) if order.store_id else None,
             "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
             "delivery_pincode": order.delivery_pincode,
+            "delivery_date": _order_date_values(db, order)["delivery_date"],
+            "collection_date": _order_date_values(db, order)["collection_date"],
             "delivery_address_text": order.delivery_address_text,
             "customer_mobile": order.customer_mobile,
             "customer_email": order.customer_email,
@@ -1697,6 +1806,8 @@ def order_detail(
         "store_id": int(order.store_id) if order.store_id else None,
         "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
         "delivery_pincode": order.delivery_pincode,
+        "delivery_date": _order_date_values(db, order)["delivery_date"],
+        "collection_date": _order_date_values(db, order)["collection_date"],
         "delivery_address_text": order.delivery_address_text,
         "customer_mobile": order.customer_mobile,
         "customer_email": order.customer_email,
