@@ -28,14 +28,19 @@ class SignupVerifyOtpRequest(BaseModel):
     otp_code: str
 
 
-@router.post("/request-otp")
-def signup_request_otp(
-    payload: SignupRequestOtpRequest,
-    db: Session = Depends(get_db),
-):
-    mobile = normalize_phone_number(payload.mobile_number)
-    email = payload.email.strip().lower()
+def _clean_email(email: str) -> str:
+    return (email or "").strip().lower()
 
+
+def _validate_signup_payload(full_name: str, email: str):
+    if not full_name or not full_name.strip():
+        raise HTTPException(status_code=400, detail="Full name is required.")
+
+    if not email or "@" not in email or "." not in email:
+        raise HTTPException(status_code=400, detail="Valid email is required.")
+
+
+def _get_active_tenant(db: Session, tenant_code: str):
     tenant = db.execute(
         text(
             """
@@ -46,15 +51,22 @@ def signup_request_otp(
             LIMIT 1
             """
         ),
-        {"tenant_code": payload.tenant_code},
+        {"tenant_code": tenant_code},
     ).mappings().first()
 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    tenant_id = tenant["id"]
+    return tenant
 
-    existing_user = db.execute(
+
+def _check_active_user_duplicates(
+    db: Session,
+    tenant_id: int,
+    mobile: str,
+    email: str,
+):
+    existing_mobile = db.execute(
         text(
             """
             SELECT id
@@ -71,11 +83,56 @@ def signup_request_otp(
         },
     ).mappings().first()
 
-    if existing_user:
+    if existing_mobile:
         raise HTTPException(
             status_code=400,
-            detail="User already exists. Please login.",
+            detail="Mobile number already registered. Please login.",
         )
+
+    existing_email = db.execute(
+        text(
+            """
+            SELECT id
+            FROM users
+            WHERE tenant_id = :tenant_id
+              AND LOWER(email) = :email
+              AND status = 'ACTIVE'
+            LIMIT 1
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "email": email,
+        },
+    ).mappings().first()
+
+    if existing_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered. Please login.",
+        )
+
+
+@router.post("/request-otp")
+def signup_request_otp(
+    payload: SignupRequestOtpRequest,
+    db: Session = Depends(get_db),
+):
+    mobile = normalize_phone_number(payload.mobile_number)
+    email = _clean_email(payload.email)
+    full_name = payload.full_name.strip()
+
+    _validate_signup_payload(full_name, email)
+
+    tenant = _get_active_tenant(db, payload.tenant_code)
+    tenant_id = tenant["id"]
+
+    _check_active_user_duplicates(
+        db=db,
+        tenant_id=tenant_id,
+        mobile=mobile,
+        email=email,
+    )
 
     otp_code = generate_otp()
 
@@ -141,49 +198,21 @@ def signup_verify_otp(
     db: Session = Depends(get_db),
 ):
     mobile = normalize_phone_number(payload.mobile_number)
-    email = payload.email.strip().lower()
+    email = _clean_email(payload.email)
+    full_name = payload.full_name.strip()
     now = datetime.utcnow()
 
-    tenant = db.execute(
-        text(
-            """
-            SELECT id
-            FROM tenants
-            WHERE tenant_code = :tenant_code
-              AND app_status = 'ACTIVE'
-            LIMIT 1
-            """
-        ),
-        {"tenant_code": payload.tenant_code},
-    ).mappings().first()
+    _validate_signup_payload(full_name, email)
 
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-
+    tenant = _get_active_tenant(db, payload.tenant_code)
     tenant_id = tenant["id"]
 
-    existing_user = db.execute(
-        text(
-            """
-            SELECT id
-            FROM users
-            WHERE tenant_id = :tenant_id
-              AND mobile_number = :mobile_number
-              AND status = 'ACTIVE'
-            LIMIT 1
-            """
-        ),
-        {
-            "tenant_id": tenant_id,
-            "mobile_number": mobile,
-        },
-    ).mappings().first()
-
-    if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="User already exists. Please login.",
-        )
+    _check_active_user_duplicates(
+        db=db,
+        tenant_id=tenant_id,
+        mobile=mobile,
+        email=email,
+    )
 
     otp_row = db.execute(
         text(
@@ -262,7 +291,7 @@ def signup_verify_otp(
         ),
         {
             "tenant_id": tenant_id,
-            "full_name": payload.full_name.strip(),
+            "full_name": full_name,
             "mobile_number": mobile,
             "email": email,
         },
