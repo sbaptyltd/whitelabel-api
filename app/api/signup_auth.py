@@ -104,19 +104,19 @@ def _check_active_user_duplicates(
     if existing_mobile and existing_email:
         raise HTTPException(
             status_code=400,
-            detail="Mobile number and email already registered. Please login.",
+            detail="Mobile number and email already registered.",
         )
 
     if existing_mobile:
         raise HTTPException(
             status_code=400,
-            detail="Mobile number already registered. Please login.",
+            detail="Mobile number already registered.",
         )
 
     if existing_email:
         raise HTTPException(
             status_code=400,
-            detail="Email already registered. Please login.",
+            detail="Email already registered.",
         )
 
 
