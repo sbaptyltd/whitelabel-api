@@ -1,12 +1,11 @@
 from datetime import datetime, timedelta
-import hashlib
-import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.services.twilio_sms import generate_otp, send_sms_otp, normalize_phone_number
 
@@ -29,24 +28,11 @@ class SignupVerifyOtpRequest(BaseModel):
     otp_code: str
 
 
-def normalize_mobile(mobile: str) -> str:
-    mobile = mobile.strip().replace(" ", "")
-
-    if mobile.startswith("+"):
-        return mobile
-
-    if mobile.startswith("0"):
-        return "+61" + mobile[1:]
-
-    return mobile
-
-
 @router.post("/request-otp")
 def signup_request_otp(
     payload: SignupRequestOtpRequest,
     db: Session = Depends(get_db),
 ):
-   
     mobile = normalize_phone_number(payload.mobile_number)
     email = payload.email.strip().lower()
 
@@ -56,6 +42,7 @@ def signup_request_otp(
             SELECT id
             FROM tenants
             WHERE tenant_code = :tenant_code
+              AND app_status = 'ACTIVE'
             LIMIT 1
             """
         ),
@@ -92,9 +79,9 @@ def signup_request_otp(
 
     otp_code = generate_otp()
 
-    otp_hash = hashlib.sha256(otp_code.encode()).hexdigest()
-
-    expires_at = datetime.utcnow() + timedelta(minutes=5)
+    expires_at = datetime.utcnow() + timedelta(
+        minutes=settings.OTP_EXPIRY_MINUTES
+    )
 
     db.execute(
         text(
@@ -103,20 +90,20 @@ def signup_request_otp(
                 (
                     tenant_id,
                     mobile_number,
-                    otp_hash,
+                    otp_code,
                     purpose,
-                    expires_at,
                     is_used,
+                    expires_at,
                     created_at
                 )
             VALUES
                 (
                     :tenant_id,
                     :mobile_number,
-                    :otp_hash,
+                    :otp_code,
                     'SIGNUP',
-                    :expires_at,
                     0,
+                    :expires_at,
                     NOW()
                 )
             """
@@ -124,18 +111,27 @@ def signup_request_otp(
         {
             "tenant_id": tenant_id,
             "mobile_number": mobile,
-            "otp_hash": otp_hash,
+            "otp_code": otp_code,
             "expires_at": expires_at,
         },
     )
 
     db.commit()
 
-    send_sms_otp(mobile, otp_code)
+    try:
+        sms_result = send_sms_otp(
+            phone_number=mobile,
+            otp_code=otp_code,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send OTP: {str(e)}",
+        )
 
     return {
         "success": True,
-        "message": "OTP sent successfully.",
+        "message": f"OTP sent successfully. Status: {sms_result.get('status', 'sent')}",
     }
 
 
@@ -144,8 +140,9 @@ def signup_verify_otp(
     payload: SignupVerifyOtpRequest,
     db: Session = Depends(get_db),
 ):
-    mobile = normalize_mobile(payload.mobile_number)
+    mobile = normalize_phone_number(payload.mobile_number)
     email = payload.email.strip().lower()
+    now = datetime.utcnow()
 
     tenant = db.execute(
         text(
@@ -153,6 +150,7 @@ def signup_verify_otp(
             SELECT id
             FROM tenants
             WHERE tenant_code = :tenant_code
+              AND app_status = 'ACTIVE'
             LIMIT 1
             """
         ),
@@ -187,19 +185,16 @@ def signup_verify_otp(
             detail="User already exists. Please login.",
         )
 
-    otp_hash = hashlib.sha256(payload.otp_code.encode()).hexdigest()
-
     otp_row = db.execute(
         text(
             """
-            SELECT id
+            SELECT id, expires_at
             FROM otp_requests
             WHERE tenant_id = :tenant_id
               AND mobile_number = :mobile_number
-              AND otp_hash = :otp_hash
+              AND otp_code = :otp_code
               AND purpose = 'SIGNUP'
               AND is_used = 0
-              AND expires_at > NOW()
             ORDER BY id DESC
             LIMIT 1
             """
@@ -207,14 +202,20 @@ def signup_verify_otp(
         {
             "tenant_id": tenant_id,
             "mobile_number": mobile,
-            "otp_hash": otp_hash,
+            "otp_code": payload.otp_code.strip(),
         },
     ).mappings().first()
 
     if not otp_row:
         raise HTTPException(
             status_code=400,
-            detail="Invalid or expired OTP.",
+            detail="Invalid OTP.",
+        )
+
+    if otp_row["expires_at"] < now:
+        raise HTTPException(
+            status_code=400,
+            detail="OTP expired.",
         )
 
     db.execute(
