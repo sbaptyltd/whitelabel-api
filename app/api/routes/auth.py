@@ -62,6 +62,18 @@ def request_otp(payload: RequestOtpRequest, db: Session = Depends(get_db)):
             otp_sent=True,
         )
 
+    user = db.query(User).filter(
+        User.tenant_id == tenant.id,
+        User.mobile_number == normalized_mobile,
+        User.status == "ACTIVE",
+    ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found. Please sign up first.",
+        )
+
     otp_code = generate_otp()
 
     try:
@@ -129,26 +141,32 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(
         User.tenant_id == tenant.id,
         User.mobile_number == normalized_mobile,
+        User.status == "ACTIVE",
     ).first()
 
     if not user:
-        user = User(
-            tenant_id=tenant.id,
-            full_name=payload.full_name or "Apple App Review",
-            mobile_number=normalized_mobile,
-            email=payload.email or "appreview@desidash.com.au",
-            role="user",
-            store_id=2,
-            is_mobile_verified=True,
-            status="ACTIVE",
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(user)
-        db.flush()
+        if is_app_review_login:
+            user = User(
+                tenant_id=tenant.id,
+                full_name=payload.full_name or "Apple App Review",
+                mobile_number=normalized_mobile,
+                email=payload.email or "appreview@desidash.com.au",
+                role="user",
+                store_id=2,
+                is_mobile_verified=True,
+                status="ACTIVE",
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(user)
+            db.flush()
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail="User not found. Please sign up first.",
+            )
     else:
         user.is_mobile_verified = True
-        user.status = "ACTIVE"
         user.updated_at = now
 
         if is_app_review_login:
@@ -156,12 +174,6 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
             user.email = user.email or "appreview@desidash.com.au"
             user.role = "user"
             user.store_id = user.store_id or 2
-        else:
-            if payload.full_name:
-                user.full_name = payload.full_name
-
-            if payload.email:
-                user.email = payload.email
 
     token = create_access_token(str(user.id))
 
