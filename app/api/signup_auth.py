@@ -83,20 +83,15 @@ def _check_active_user_duplicates(
         },
     ).mappings().first()
 
-    if existing_mobile:
-        raise HTTPException(
-            status_code=400,
-            detail="Mobile number already registered. Please login.",
-        )
-
     existing_email = db.execute(
         text(
             """
             SELECT id
             FROM users
             WHERE tenant_id = :tenant_id
-              AND LOWER(email) = :email
               AND status = 'ACTIVE'
+              AND email IS NOT NULL
+              AND TRIM(LOWER(email)) = TRIM(LOWER(:email))
             LIMIT 1
             """
         ),
@@ -105,6 +100,18 @@ def _check_active_user_duplicates(
             "email": email,
         },
     ).mappings().first()
+
+    if existing_mobile and existing_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Mobile number and email already registered. Please login.",
+        )
+
+    if existing_mobile:
+        raise HTTPException(
+            status_code=400,
+            detail="Mobile number already registered. Please login.",
+        )
 
     if existing_email:
         raise HTTPException(
@@ -236,16 +243,10 @@ def signup_verify_otp(
     ).mappings().first()
 
     if not otp_row:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid OTP.",
-        )
+        raise HTTPException(status_code=400, detail="Invalid OTP.")
 
     if otp_row["expires_at"] < now:
-        raise HTTPException(
-            status_code=400,
-            detail="OTP expired.",
-        )
+        raise HTTPException(status_code=400, detail="OTP expired.")
 
     db.execute(
         text(
@@ -255,9 +256,7 @@ def signup_verify_otp(
             WHERE id = :id
             """
         ),
-        {
-            "id": otp_row["id"],
-        },
+        {"id": otp_row["id"]},
     )
 
     db.execute(
