@@ -3,12 +3,12 @@ import hashlib
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.services.sms import generate_otp, send_sms_otp
+from app.services.twilio_sms import generate_otp, send_sms_otp, normalize_phone_number
 
 router = APIRouter(prefix="/api/auth/signup", tags=["signup-auth"])
 
@@ -17,7 +17,7 @@ class SignupRequestOtpRequest(BaseModel):
     tenant_code: str
     full_name: str
     mobile_number: str
-    email: EmailStr
+    email: str
     purpose: str = "SIGNUP"
 
 
@@ -25,7 +25,7 @@ class SignupVerifyOtpRequest(BaseModel):
     tenant_code: str
     full_name: str
     mobile_number: str
-    email: EmailStr
+    email: str
     otp_code: str
 
 
@@ -46,7 +46,8 @@ def signup_request_otp(
     payload: SignupRequestOtpRequest,
     db: Session = Depends(get_db),
 ):
-    mobile = normalize_mobile(payload.mobile_number)
+   
+    mobile = normalize_phone_number(payload.mobile_number)
     email = payload.email.strip().lower()
 
     tenant = db.execute(
