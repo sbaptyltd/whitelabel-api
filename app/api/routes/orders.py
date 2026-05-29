@@ -241,24 +241,48 @@ def _order_platform_fee_value(db: Session, order: Order) -> float:
 
 def _clean_order_date(value):
     """
-    Accepts yyyy-MM-dd from Flutter and returns it unchanged for MySQL DATE.
-    Empty/invalid values become None so order creation does not crash.
+    Normalises Flutter/UI date values into MySQL DATE format: yyyy-mm-dd.
+
+    Accepted inputs:
+    - 2026-05-30
+    - 2026-05-30T00:00:00.000
+    - 2026-05-30 00:00:00
+    - 30/05/2026
+    - 30-05-2026
+
+    Empty/invalid values become None or a clear 400 error.
     """
     if value is None:
         return None
 
-    value = str(value).strip()
-    if not value:
+    raw = str(value).strip()
+    if not raw or raw.lower() == "null":
         return None
 
-    try:
-        datetime.strptime(value, "%Y-%m-%d")
-        return value
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Date must be in yyyy-MM-dd format",
-        )
+    # Remove timestamp if Flutter/Stripe metadata sends ISO/date-time.
+    date_part = raw.split("T")[0].split(" ")[0].strip()
+
+    accepted_formats = [
+        "%Y-%m-%d",  # 2026-05-30
+        "%d/%m/%Y",  # 30/05/2026
+        "%d-%m-%Y",  # 30-05-2026
+        "%Y/%m/%d",  # 2026/05/30
+    ]
+
+    for fmt in accepted_formats:
+        try:
+            parsed = datetime.strptime(date_part, fmt)
+            return parsed.strftime("%Y-%m-%d")
+        except Exception:
+            continue
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Date must be in yyyy-mm-dd format. "
+            f"Received: {raw}"
+        ),
+    )
 
 
 def _order_date_values(db: Session, order: Order) -> dict:
