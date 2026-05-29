@@ -795,6 +795,17 @@ def create_payment_intent_from_cart(
     fees = _get_checkout_fee_breakdown(db, current_user.tenant_id, subtotal)
     amount_cents = _amount_to_cents(fees["total_amount"])
 
+    # Apple Review / demo test account override.
+    # Stripe amount is in cents, so 50 = AUD 0.50.
+    # This does not change the order/cart totals stored in the database.
+    if getattr(current_user, "mobile_number", None) == "+61400000000":
+        print(
+            "[APPLE_REVIEW_PAYMENT_OVERRIDE] "
+            f"user_id={current_user.id} mobile={current_user.mobile_number} "
+            f"original_amount_cents={amount_cents} charged_amount_cents=50"
+        )
+        amount_cents = 50
+
     if amount_cents <= 0:
         raise HTTPException(status_code=400, detail="Invalid cart amount")
 
@@ -1021,6 +1032,17 @@ def create_order_after_payment(
         subtotal = sum(Decimal(i.line_total) for i in items)
         fees = _get_checkout_fee_breakdown(db, cart.tenant_id, subtotal)
         expected_amount_cents = _amount_to_cents(fees["total_amount"])
+
+        # Apple Review / demo test account override.
+        # This must match the 50-cent PaymentIntent created above.
+        if getattr(current_user, "mobile_number", None) == "+61400000000":
+            print(
+                "[APPLE_REVIEW_PAYMENT_VALIDATION_OVERRIDE] "
+                f"user_id={current_user.id} mobile={current_user.mobile_number} "
+                f"original_expected_amount_cents={expected_amount_cents} "
+                f"expected_amount_cents=50 stripe_amount_cents={int(intent.amount)}"
+            )
+            expected_amount_cents = 50
 
         if int(intent.amount) != expected_amount_cents:
             raise HTTPException(
