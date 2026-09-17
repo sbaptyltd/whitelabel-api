@@ -40,91 +40,24 @@ def _get_or_create_cart(db: Session, tenant_id: int, user_id: int):
     return cart
 
 
-def _payload_variant_id(payload) -> int | None:
-    """
-    Read product_variant_id without breaking older request schemas.
-    The cart schema should still be updated next so clients can send this field.
-    """
-    value = getattr(payload, "product_variant_id", None)
-    if value is None:
-        return None
-    return int(value)
-
-
 def _get_cart_item_query(
     db: Session,
     cart_id: int,
     product_id: int,
     store_id: int,
     delivery_option_id: int,
-    product_variant_id: int | None,
 ):
     """
-    Marketplace cart identity:
-    cart + product + variant + store + delivery option.
-
-    For non-variant products product_variant_id is NULL.
+    Marketplace cart identity.
+    Same product from different stores or with different delivery options must be
+    treated as separate cart rows.
     """
-    query = db.query(CartItem).filter(
+    return db.query(CartItem).filter(
         CartItem.cart_id == cart_id,
         CartItem.product_id == product_id,
         CartItem.store_id == store_id,
         CartItem.delivery_option_id == delivery_option_id,
     )
-
-    if product_variant_id is None:
-        query = query.filter(CartItem.product_variant_id.is_(None))
-    else:
-        query = query.filter(CartItem.product_variant_id == product_variant_id)
-
-    return query
-
-
-def _find_cart_item(
-    db: Session,
-    cart_id: int,
-    product_id: int,
-    store_id: int,
-    delivery_option_id: int,
-    product_variant_id: int | None,
-):
-    """
-    Backwards-compatible lookup for update/remove.
-
-    If variant id is omitted and there is exactly one matching cart row, use it.
-    If multiple variants of the same product are present, require variant id.
-    """
-    if product_variant_id is not None:
-        return _get_cart_item_query(
-            db=db,
-            cart_id=cart_id,
-            product_id=product_id,
-            store_id=store_id,
-            delivery_option_id=delivery_option_id,
-            product_variant_id=product_variant_id,
-        ).first()
-
-    rows = (
-        db.query(CartItem)
-        .filter(
-            CartItem.cart_id == cart_id,
-            CartItem.product_id == product_id,
-            CartItem.store_id == store_id,
-            CartItem.delivery_option_id == delivery_option_id,
-        )
-        .order_by(CartItem.id.asc())
-        .limit(2)
-        .all()
-    )
-
-    if len(rows) > 1:
-        raise HTTPException(
-            status_code=400,
-            detail="product_variant_id is required because multiple variants of this product are in the cart",
-        )
-
-    return rows[0] if rows else None
-
 
 def _get_store_product(
     db: Session,
@@ -143,12 +76,10 @@ def _get_store_product(
                 sp.local_price,
                 sp.is_active,
                 p.product_name,
-                p.sku AS product_sku,
                 p.image_url,
                 p.base_price,
                 p.sale_price,
                 p.currency_code,
-                p.has_variants,
                 p.is_active AS product_active,
                 s.store_name,
                 s.seller_display_name,
@@ -182,130 +113,6 @@ def _get_store_product(
         )
 
     return row
-
-
-def _get_store_variant(
-    db: Session,
-    tenant_id: int,
-    store_id: int,
-    product_id: int,
-    product_variant_id: int,
-):
-    """
-    Return the selected variant with store-specific stock/price.
-
-    The variant must:
-    - belong to the parent product
-    - belong to the current tenant
-    - be active
-    - be active for the selected store
-    """
-    row = db.execute(
-        text(
-            """
-            SELECT
-                pv.id AS product_variant_id,
-                pv.product_id,
-                pv.variant_title,
-                pv.sku AS variant_sku,
-                pv.barcode,
-                pv.base_price,
-                pv.sale_price,
-                pv.currency_code,
-                pv.image_url,
-                pv.gallery_json,
-                pv.weight_grams,
-                pv.delivery_surcharge,
-                pv.is_default,
-                pv.is_active AS variant_active,
-
-                spv.store_id,
-                spv.stock_qty,
-                spv.reserved_qty,
-                spv.local_price,
-                spv.is_active AS store_variant_active
-
-            FROM product_variants pv
-            JOIN store_product_variants spv
-              ON spv.product_variant_id = pv.id
-             AND spv.tenant_id = pv.tenant_id
-
-            WHERE pv.id = :product_variant_id
-              AND pv.product_id = :product_id
-              AND pv.tenant_id = :tenant_id
-              AND spv.store_id = :store_id
-              AND pv.is_active = 1
-              AND spv.is_active = 1
-            LIMIT 1
-            """
-        ),
-        {
-            "tenant_id": tenant_id,
-            "store_id": store_id,
-            "product_id": product_id,
-            "product_variant_id": product_variant_id,
-        },
-    ).mappings().first()
-
-    if not row:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid or unavailable product variant for this store",
-        )
-
-    return row
-
-
-def _variant_options_snapshot(
-    db: Session,
-    tenant_id: int,
-    product_id: int,
-    product_variant_id: int,
-) -> dict:
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                po.option_name,
-                pov.option_value
-            FROM product_variant_values pvv
-            JOIN product_variants pv
-              ON pv.id = pvv.variant_id
-            JOIN product_options po
-              ON po.id = pvv.option_id
-             AND po.product_id = pv.product_id
-             AND po.tenant_id = pv.tenant_id
-            JOIN product_option_values pov
-              ON pov.id = pvv.option_value_id
-             AND pov.option_id = po.id
-             AND pov.tenant_id = po.tenant_id
-            WHERE pv.id = :product_variant_id
-              AND pv.product_id = :product_id
-              AND pv.tenant_id = :tenant_id
-            ORDER BY
-                po.sort_order ASC,
-                po.id ASC,
-                pov.sort_order ASC,
-                pov.id ASC
-            """
-        ),
-        {
-            "tenant_id": tenant_id,
-            "product_id": product_id,
-            "product_variant_id": product_variant_id,
-        },
-    ).mappings().all()
-
-    return {
-        str(row["option_name"]): str(row["option_value"])
-        for row in rows
-    }
-
-
-def _variant_title_from_options(options: dict) -> str | None:
-    if not options:
-        return None
-    return " / ".join(str(v) for v in options.values())
 
 
 def _get_delivery_option(
@@ -371,24 +178,17 @@ def _eta_text(min_days, max_days):
 
 
 def _available_stock(row) -> int:
-    return max(
-        int(row["stock_qty"] or 0) - int(row["reserved_qty"] or 0),
-        0,
-    )
-
-
-def _decimal(value) -> Decimal:
-    return Decimal(str(value or 0))
+    return int(row["stock_qty"] or 0) - int(row["reserved_qty"] or 0)
 
 
 def _final_price(row) -> Decimal:
     if row["local_price"] is not None:
-        return _decimal(row["local_price"])
+        return Decimal(row["local_price"])
 
     if row["sale_price"] is not None:
-        return _decimal(row["sale_price"])
+        return Decimal(row["sale_price"])
 
-    return _decimal(row["base_price"])
+    return Decimal(row["base_price"] or 0)
 
 
 @router.get("")
@@ -429,8 +229,8 @@ def get_cart(
     delivery_total = Decimal("0.00")
 
     for i in items:
-        line_total = _decimal(i.line_total)
-        delivery_fee = _decimal(i.delivery_fee_snapshot)
+        line_total = Decimal(i.line_total or 0)
+        delivery_fee = Decimal(i.delivery_fee_snapshot or 0)
 
         items_total += line_total
         delivery_total += delivery_fee
@@ -469,9 +269,6 @@ def get_cart(
         item_dict = {
             "cart_item_id": int(i.id),
             "product_id": int(i.product_id),
-            "product_variant_id": int(i.product_variant_id)
-            if i.product_variant_id is not None
-            else None,
             "store_id": store_id,
             "store_name": store_name,
             "sold_by": sold_by,
@@ -484,9 +281,6 @@ def get_cart(
             "delivery_fee": float(delivery_fee),
             "delivery_eta": i.delivery_eta_snapshot,
             "product_name": i.product_name_snapshot,
-            "variant_title": i.variant_title_snapshot,
-            "variant_sku": i.variant_sku_snapshot,
-            "variant_options": i.variant_options_snapshot or {},
             "image_url": i.product_image_snapshot,
             "unit_price": float(i.unit_price_snapshot),
             "quantity": int(i.quantity),
@@ -561,58 +355,8 @@ def add_to_cart(
         delivery_option_id=payload.delivery_option_id,
     )
 
-    product_variant_id = _payload_variant_id(payload)
-    has_variants = bool(store_product["has_variants"])
-
-    variant_row = None
-    variant_options = {}
-    variant_title = None
-    variant_sku = None
-    image_url = store_product["image_url"]
-    stock_price_row = store_product
-
-    if has_variants:
-        if product_variant_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="product_variant_id is required for this product",
-            )
-
-        variant_row = _get_store_variant(
-            db=db,
-            tenant_id=current_user.tenant_id,
-            store_id=payload.store_id,
-            product_id=payload.product_id,
-            product_variant_id=product_variant_id,
-        )
-
-        variant_options = _variant_options_snapshot(
-            db=db,
-            tenant_id=current_user.tenant_id,
-            product_id=payload.product_id,
-            product_variant_id=product_variant_id,
-        )
-
-        variant_title = (
-            variant_row["variant_title"]
-            or _variant_title_from_options(variant_options)
-        )
-        variant_sku = variant_row["variant_sku"]
-        image_url = variant_row["image_url"] or store_product["image_url"]
-        stock_price_row = variant_row
-
-    elif product_variant_id is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="This product does not use variants",
-        )
-
-    price = _final_price(stock_price_row)
-
-    delivery_fee = _decimal(delivery_option["delivery_fee"])
-    if variant_row is not None:
-        delivery_fee += _decimal(variant_row["delivery_surcharge"])
-
+    price = _final_price(store_product)
+    delivery_fee = Decimal(delivery_option["delivery_fee"] or 0)
     delivery_eta = _eta_text(
         delivery_option["min_days"],
         delivery_option["max_days"],
@@ -624,13 +368,12 @@ def add_to_cart(
         product_id=payload.product_id,
         store_id=payload.store_id,
         delivery_option_id=payload.delivery_option_id,
-        product_variant_id=product_variant_id,
     ).first()
 
     existing_qty = int(item.quantity) if item else 0
     new_qty = existing_qty + payload.quantity
 
-    available = _available_stock(stock_price_row)
+    available = _available_stock(store_product)
 
     if new_qty > available:
         raise HTTPException(
@@ -643,10 +386,6 @@ def add_to_cart(
         item.unit_price_snapshot = price
         item.delivery_fee_snapshot = delivery_fee
         item.delivery_eta_snapshot = delivery_eta
-        item.variant_title_snapshot = variant_title
-        item.variant_sku_snapshot = variant_sku
-        item.variant_options_snapshot = variant_options or None
-        item.product_image_snapshot = image_url
         item.line_total = Decimal(new_qty) * price
     else:
         item = CartItem(
@@ -654,7 +393,6 @@ def add_to_cart(
             tenant_id=current_user.tenant_id,
             user_id=current_user.id,
             product_id=payload.product_id,
-            product_variant_id=product_variant_id,
             store_id=payload.store_id,
             delivery_option_id=payload.delivery_option_id,
             delivery_method_code=delivery_option["delivery_method_code"],
@@ -662,10 +400,7 @@ def add_to_cart(
             delivery_fee_snapshot=delivery_fee,
             delivery_eta_snapshot=delivery_eta,
             product_name_snapshot=store_product["product_name"],
-            variant_title_snapshot=variant_title,
-            variant_sku_snapshot=variant_sku,
-            variant_options_snapshot=variant_options or None,
-            product_image_snapshot=image_url,
+            product_image_snapshot=store_product["image_url"],
             unit_price_snapshot=price,
             quantity=payload.quantity,
             line_total=Decimal(payload.quantity) * price,
@@ -677,15 +412,15 @@ def add_to_cart(
     except IntegrityError:
         db.rollback()
 
-        # Race-safe fallback: another request may have inserted the same
-        # product + variant + store + delivery option between SELECT and INSERT.
+        # Race-safe fallback: another request may have inserted the exact same
+        # cart identity between our SELECT and INSERT. Re-read the exact
+        # marketplace cart row and update quantity.
         item = _get_cart_item_query(
             db=db,
             cart_id=cart.id,
             product_id=payload.product_id,
             store_id=payload.store_id,
             delivery_option_id=payload.delivery_option_id,
-            product_variant_id=product_variant_id,
         ).first()
 
         if not item:
@@ -697,7 +432,7 @@ def add_to_cart(
         existing_qty = int(item.quantity or 0)
         new_qty = existing_qty + payload.quantity
 
-        available = _available_stock(stock_price_row)
+        available = _available_stock(store_product)
         if new_qty > available:
             raise HTTPException(
                 status_code=400,
@@ -708,20 +443,12 @@ def add_to_cart(
         item.unit_price_snapshot = price
         item.delivery_fee_snapshot = delivery_fee
         item.delivery_eta_snapshot = delivery_eta
-        item.variant_title_snapshot = variant_title
-        item.variant_sku_snapshot = variant_sku
-        item.variant_options_snapshot = variant_options or None
-        item.product_image_snapshot = image_url
         item.line_total = Decimal(new_qty) * price
         db.commit()
 
     return {
         "message": "Added to cart",
         "product_id": payload.product_id,
-        "product_variant_id": product_variant_id,
-        "variant_title": variant_title,
-        "variant_sku": variant_sku,
-        "variant_options": variant_options,
         "store_id": payload.store_id,
         "delivery_option_id": payload.delivery_option_id,
         "quantity": new_qty,
@@ -745,16 +472,13 @@ def update_cart(
             detail="store_id and delivery_option_id are required for marketplace cart updates",
         )
 
-    product_variant_id = _payload_variant_id(payload)
-
-    item = _find_cart_item(
+    item = _get_cart_item_query(
         db=db,
         cart_id=cart.id,
         product_id=payload.product_id,
         store_id=payload.store_id,
         delivery_option_id=payload.delivery_option_id,
-        product_variant_id=product_variant_id,
-    )
+    ).first()
 
     if not item:
         raise HTTPException(status_code=404, detail="Cart item not found")
@@ -774,35 +498,7 @@ def update_cart(
         product_id=payload.product_id,
     )
 
-    stock_price_row = store_product
-    variant_options = {}
-    variant_title = None
-    variant_sku = None
-    image_url = store_product["image_url"]
-
-    if item.product_variant_id is not None:
-        variant_row = _get_store_variant(
-            db=db,
-            tenant_id=current_user.tenant_id,
-            store_id=item.store_id,
-            product_id=payload.product_id,
-            product_variant_id=int(item.product_variant_id),
-        )
-        stock_price_row = variant_row
-        variant_options = _variant_options_snapshot(
-            db=db,
-            tenant_id=current_user.tenant_id,
-            product_id=payload.product_id,
-            product_variant_id=int(item.product_variant_id),
-        )
-        variant_title = (
-            variant_row["variant_title"]
-            or _variant_title_from_options(variant_options)
-        )
-        variant_sku = variant_row["variant_sku"]
-        image_url = variant_row["image_url"] or store_product["image_url"]
-
-    available = _available_stock(stock_price_row)
+    available = _available_stock(store_product)
 
     if payload.quantity > available:
         raise HTTPException(
@@ -810,14 +506,10 @@ def update_cart(
             detail=f"Only {available} available in this store",
         )
 
-    price = _final_price(stock_price_row)
+    price = _final_price(store_product)
 
     item.quantity = payload.quantity
     item.unit_price_snapshot = price
-    item.variant_title_snapshot = variant_title
-    item.variant_sku_snapshot = variant_sku
-    item.variant_options_snapshot = variant_options or None
-    item.product_image_snapshot = image_url
     item.line_total = Decimal(payload.quantity) * price
 
     db.commit()
@@ -825,15 +517,11 @@ def update_cart(
     return {
         "message": "Cart updated",
         "product_id": payload.product_id,
-        "product_variant_id": int(item.product_variant_id)
-        if item.product_variant_id is not None
-        else None,
         "store_id": int(item.store_id),
         "delivery_option_id": int(item.delivery_option_id)
         if item.delivery_option_id
         else None,
         "quantity": payload.quantity,
-        "unit_price": float(price),
     }
 
 
@@ -851,34 +539,16 @@ def remove_cart(
             detail="store_id and delivery_option_id are required for marketplace cart updates",
         )
 
-    product_variant_id = _payload_variant_id(payload)
-
-    item = _find_cart_item(
+    item = _get_cart_item_query(
         db=db,
         cart_id=cart.id,
         product_id=payload.product_id,
         store_id=payload.store_id,
         delivery_option_id=payload.delivery_option_id,
-        product_variant_id=product_variant_id,
-    )
+    ).first()
 
     if item:
-        removed_variant_id = (
-            int(item.product_variant_id)
-            if item.product_variant_id is not None
-            else None
-        )
         db.delete(item)
         db.commit()
 
-        return {
-            "message": "Removed from cart",
-            "product_id": payload.product_id,
-            "product_variant_id": removed_variant_id,
-        }
-
-    return {
-        "message": "Removed from cart",
-        "product_id": payload.product_id,
-        "product_variant_id": product_variant_id,
-    }
+    return {"message": "Removed from cart"}

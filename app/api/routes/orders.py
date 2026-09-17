@@ -63,14 +63,12 @@ VALID_STORE_STATUSES = [
 
 
 class CreatePaymentIntentFromCartRequest(BaseModel):
-    store_id: int
     delivery_pincode: str | None = None
     delivery_date: str | None = None
     collection_date: str | None = None
 
 
 class CreateOrderAfterPaymentRequest(BaseModel):
-    store_id: int
     delivery_pincode: str
     delivery_address_text: str
     customer_email: str | None = None
@@ -668,7 +666,16 @@ def _validate_store(db: Session, tenant_id: int, store_id: int):
     return row
 
 
-def _reserve_store_stock(db: Session, tenant_id: int, store_id: int, product_id: int, quantity: int):
+def _reserve_store_stock(
+    db: Session,
+    tenant_id: int,
+    store_id: int,
+    product_id: int,
+    quantity: int,
+):
+    """
+    Reserve inventory for a legacy/non-variant product.
+    """
     result = db.execute(
         text(
             """
@@ -707,47 +714,497 @@ def _reserve_store_stock(db: Session, tenant_id: int, store_id: int, product_id:
         raise HTTPException(status_code=400, detail=f"Not enough stock for {product_name}")
 
 
+def _reserve_store_variant_stock(
+    db: Session,
+    tenant_id: int,
+    store_id: int,
+    product_id: int,
+    product_variant_id: int,
+    quantity: int,
+):
+    """
+    Reserve inventory for the exact selected variant.
+    The variant must belong to the parent product and be active for the store.
+    """
+    result = db.execute(
+        text(
+            """
+            UPDATE store_product_variants spv
+            JOIN product_variants pv
+              ON pv.id = spv.product_variant_id
+             AND pv.tenant_id = spv.tenant_id
+            SET spv.reserved_qty = spv.reserved_qty + :quantity
+            WHERE spv.tenant_id = :tenant_id
+              AND spv.store_id = :store_id
+              AND spv.product_variant_id = :product_variant_id
+              AND spv.is_active = 1
+              AND pv.product_id = :product_id
+              AND pv.is_active = 1
+              AND (spv.stock_qty - spv.reserved_qty) >= :quantity
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "store_id": store_id,
+            "product_id": product_id,
+            "product_variant_id": product_variant_id,
+            "quantity": quantity,
+        },
+    )
+
+    if result.rowcount == 0:
+        variant_row = db.execute(
+            text(
+                """
+                SELECT
+                    p.product_name,
+                    pv.variant_title
+                FROM product_variants pv
+                JOIN products p
+                  ON p.id = pv.product_id
+                 AND p.tenant_id = pv.tenant_id
+                WHERE pv.id = :product_variant_id
+                  AND pv.product_id = :product_id
+                  AND pv.tenant_id = :tenant_id
+                LIMIT 1
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "product_id": product_id,
+                "product_variant_id": product_variant_id,
+            },
+        ).mappings().first()
+
+        if variant_row:
+            label = variant_row["product_name"]
+            if variant_row["variant_title"]:
+                label = f'{label} ({variant_row["variant_title"]})'
+        else:
+            label = f"Product {product_id}, variant {product_variant_id}"
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough stock or variant unavailable for {label}",
+        )
+
+
+def _reserve_cart_item_stock(
+    db: Session,
+    tenant_id: int,
+    store_id: int,
+    item: CartItem,
+):
+    """
+    Route stock reservation to the parent store-product row or the exact
+    store-product-variant row, depending on the cart item.
+    """
+    if getattr(item, "product_variant_id", None) is not None:
+        _reserve_store_variant_stock(
+            db=db,
+            tenant_id=tenant_id,
+            store_id=store_id,
+            product_id=int(item.product_id),
+            product_variant_id=int(item.product_variant_id),
+            quantity=int(item.quantity),
+        )
+        return
+
+    _reserve_store_stock(
+        db=db,
+        tenant_id=tenant_id,
+        store_id=store_id,
+        product_id=int(item.product_id),
+        quantity=int(item.quantity),
+    )
+
+
+def _validate_cart_item_inventory(
+    db: Session,
+    tenant_id: int,
+    item: CartItem,
+):
+    """
+    Validate the cart's product/variant relationship and current store stock.
+    This catches stale or unavailable selections before payment is attempted.
+    """
+    product_row = db.execute(
+        text(
+            """
+            SELECT
+                p.product_name,
+                p.has_variants
+            FROM products p
+            WHERE p.id = :product_id
+              AND p.tenant_id = :tenant_id
+              AND p.is_active = 1
+            LIMIT 1
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "product_id": item.product_id,
+        },
+    ).mappings().first()
+
+    if not product_row:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Product {item.product_id} is no longer available",
+        )
+
+    has_variants = bool(product_row["has_variants"])
+    variant_id = getattr(item, "product_variant_id", None)
+
+    if has_variants and variant_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'{product_row["product_name"]} requires a product variant. '
+                "Please remove it from the cart and select the options again."
+            ),
+        )
+
+    if not has_variants and variant_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f'{product_row["product_name"]} does not use variants',
+        )
+
+    if variant_id is not None:
+        row = db.execute(
+            text(
+                """
+                SELECT
+                    pv.variant_title,
+                    spv.stock_qty,
+                    spv.reserved_qty
+                FROM product_variants pv
+                JOIN store_product_variants spv
+                  ON spv.product_variant_id = pv.id
+                 AND spv.tenant_id = pv.tenant_id
+                WHERE pv.id = :product_variant_id
+                  AND pv.product_id = :product_id
+                  AND pv.tenant_id = :tenant_id
+                  AND pv.is_active = 1
+                  AND spv.store_id = :store_id
+                  AND spv.is_active = 1
+                LIMIT 1
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "store_id": item.store_id,
+                "product_id": item.product_id,
+                "product_variant_id": variant_id,
+            },
+        ).mappings().first()
+
+        if not row:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Selected variant for {product_row["product_name"]} is no longer available',
+            )
+
+        available = max(
+            int(row["stock_qty"] or 0) - int(row["reserved_qty"] or 0),
+            0,
+        )
+
+        if int(item.quantity or 0) > available:
+            label = product_row["product_name"]
+            if row["variant_title"]:
+                label = f'{label} ({row["variant_title"]})'
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {available} available for {label}",
+            )
+        return
+
+    row = db.execute(
+        text(
+            """
+            SELECT
+                stock_qty,
+                reserved_qty
+            FROM store_products
+            WHERE tenant_id = :tenant_id
+              AND store_id = :store_id
+              AND product_id = :product_id
+              AND is_active = 1
+            LIMIT 1
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "store_id": item.store_id,
+            "product_id": item.product_id,
+        },
+    ).mappings().first()
+
+    if not row:
+        raise HTTPException(
+            status_code=400,
+            detail=f'{product_row["product_name"]} is no longer available in this store',
+        )
+
+    available = max(
+        int(row["stock_qty"] or 0) - int(row["reserved_qty"] or 0),
+        0,
+    )
+
+    if int(item.quantity or 0) > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Only {available} available for {product_row["product_name"]}',
+        )
+
+
+
+
+def _get_platform_fee_amount(db: Session, tenant_id: int) -> Decimal:
+    row = db.execute(
+        text(
+            """
+            SELECT platform_fee
+            FROM tenant_fee_config
+            WHERE tenant_id = :tenant_id
+              AND is_active = 1
+            LIMIT 1
+            """
+        ),
+        {"tenant_id": tenant_id},
+    ).mappings().first()
+
+    if not row:
+        return Decimal("0.00")
+
+    return Decimal(row["platform_fee"] or 0).quantize(Decimal("0.01"))
+
+
+def _active_cart_items(db: Session, tenant_id: int, user_id: int):
+    cart = _active_cart(db, tenant_id, user_id)
+
+    if not cart:
+        raise HTTPException(status_code=400, detail="Cart is empty")
+
+    items = (
+        db.query(CartItem)
+        .filter(CartItem.cart_id == cart.id)
+        .order_by(CartItem.store_id.asc(), CartItem.id.asc())
+        .all()
+    )
+
+    if not items:
+        raise HTTPException(status_code=400, detail="Cart is empty")
+
+    for item in items:
+        if not item.store_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cart item {item.id} has no store_id. Please remove and add again.",
+            )
+
+        if not item.delivery_option_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cart item {item.id} has no delivery option. Please remove and add again.",
+            )
+
+        _validate_cart_item_inventory(
+            db=db,
+            tenant_id=tenant_id,
+            item=item,
+        )
+
+    return cart, items
+
+
+def _marketplace_cart_totals(
+    db: Session,
+    tenant_id: int,
+    items: list[CartItem],
+) -> dict:
+    items_subtotal = Decimal("0.00")
+    delivery_total = Decimal("0.00")
+    stores: dict[int, dict] = {}
+
+    for item in items:
+        store_id = int(item.store_id)
+        line_total = Decimal(item.line_total or 0).quantize(Decimal("0.01"))
+        delivery_fee = Decimal(item.delivery_fee_snapshot or 0).quantize(Decimal("0.01"))
+
+        items_subtotal += line_total
+        delivery_total += delivery_fee
+
+        if store_id not in stores:
+            stores[store_id] = {
+                "store_id": store_id,
+                "items": [],
+                "items_subtotal": Decimal("0.00"),
+                "delivery_total": Decimal("0.00"),
+                "store_total": Decimal("0.00"),
+            }
+
+        stores[store_id]["items"].append(item)
+        stores[store_id]["items_subtotal"] += line_total
+        stores[store_id]["delivery_total"] += delivery_fee
+        stores[store_id]["store_total"] += line_total + delivery_fee
+
+    platform_fee = _get_platform_fee_amount(db, tenant_id)
+    tax_amount = Decimal("0.00")
+    discount_amount = Decimal("0.00")
+
+    total_amount = (
+        items_subtotal
+        + delivery_total
+        + platform_fee
+        + tax_amount
+        - discount_amount
+    ).quantize(Decimal("0.01"))
+
+    return {
+        "items_subtotal": items_subtotal.quantize(Decimal("0.01")),
+        "delivery_total": delivery_total.quantize(Decimal("0.01")),
+        "platform_fee_amount": platform_fee.quantize(Decimal("0.01")),
+        "tax_amount": tax_amount,
+        "discount_amount": discount_amount,
+        "total_amount": total_amount,
+        "stores": stores,
+    }
+
+
+def _store_display_row(db: Session, tenant_id: int, store_id: int):
+    return db.execute(
+        text(
+            """
+            SELECT
+                id,
+                store_name,
+                store_email,
+                seller_display_name,
+                ships_from_name,
+                seller_contact_email
+            FROM stores
+            WHERE tenant_id = :tenant_id
+              AND id = :store_id
+              AND is_active = 1
+            LIMIT 1
+            """
+        ),
+        {"tenant_id": tenant_id, "store_id": store_id},
+    ).mappings().first()
+
+
+def _validate_cart_item_delivery_option(
+    db: Session,
+    tenant_id: int,
+    item: CartItem,
+):
+    row = db.execute(
+        text(
+            """
+            SELECT pdo.id
+            FROM product_delivery_options pdo
+            WHERE pdo.id = :delivery_option_id
+              AND pdo.tenant_id = :tenant_id
+              AND pdo.store_id = :store_id
+              AND pdo.product_id = :product_id
+              AND pdo.is_active = 1
+            LIMIT 1
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "delivery_option_id": item.delivery_option_id,
+            "store_id": item.store_id,
+            "product_id": item.product_id,
+        },
+    ).first()
+
+    if not row:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid delivery option for product {item.product_id}",
+        )
+
+
+def _order_item_dict(item: OrderItem) -> dict:
+    return {
+        "order_item_id": int(item.id),
+        "product_id": int(item.product_id) if item.product_id else None,
+        "product_variant_id": (
+            int(item.product_variant_id)
+            if getattr(item, "product_variant_id", None) is not None
+            else None
+        ),
+        "store_id": int(item.store_id) if getattr(item, "store_id", None) else None,
+        "delivery_option_id": int(item.delivery_option_id) if getattr(item, "delivery_option_id", None) else None,
+        "delivery_method_code": getattr(item, "delivery_method_code", None),
+        "delivery_label": getattr(item, "delivery_label", None),
+        "delivery_fee": float(getattr(item, "delivery_fee_snapshot", 0) or 0),
+        "delivery_eta": getattr(item, "delivery_eta_snapshot", None),
+        "product_name": item.product_name_snapshot,
+        "variant_title": getattr(item, "variant_title_snapshot", None),
+        "variant_sku": getattr(item, "variant_sku_snapshot", None),
+        "variant_options": getattr(item, "variant_options_snapshot", None) or {},
+        "product_image": item.product_image_snapshot,
+        "sku": item.sku_snapshot,
+        "unit_price": float(item.unit_price_snapshot),
+        "quantity": int(item.quantity),
+        "line_total": float(item.line_total),
+    }
+
 
 @router.get("/checkout/summary")
 def checkout_summary(
-    store_id: int,
     delivery_pincode: str | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """
-    Returns checkout price breakdown for Flutter before Stripe payment.
-    Source of truth is backend DB config, not Flutter hardcoding.
+    Marketplace checkout summary.
+    Cart can contain items from multiple stores, and every item carries its own
+    store_id + delivery_option_id + delivery fee snapshot.
     """
-    cart = _active_cart(db, current_user.tenant_id, current_user.id)
+    cart, items = _active_cart_items(db, current_user.tenant_id, current_user.id)
 
-    if not cart:
-        raise HTTPException(status_code=400, detail="Cart is empty")
+    for item in items:
+        _validate_store(db, current_user.tenant_id, int(item.store_id))
+        _validate_cart_item_delivery_option(db, current_user.tenant_id, item)
 
-    items = db.query(CartItem).filter(CartItem.cart_id == cart.id).all()
+    totals = _marketplace_cart_totals(db, current_user.tenant_id, items)
 
-    if not items:
-        raise HTTPException(status_code=400, detail="Cart is empty")
-
-    _validate_store(db, current_user.tenant_id, store_id)
-
-    subtotal = sum(Decimal(i.line_total) for i in items)
-    fees = _get_checkout_fee_breakdown(db, current_user.tenant_id, subtotal)
+    store_summaries = []
+    for store_id, group in totals["stores"].items():
+        store_row = _store_display_row(db, current_user.tenant_id, store_id)
+        store_summaries.append(
+            {
+                "store_id": store_id,
+                "store_name": store_row["store_name"] if store_row else None,
+                "sold_by": (store_row["seller_display_name"] or store_row["store_name"]) if store_row else None,
+                "ships_from": (store_row["ships_from_name"] or store_row["store_name"]) if store_row else None,
+                "items_count": len(group["items"]),
+                "items_subtotal": float(group["items_subtotal"]),
+                "delivery_total": float(group["delivery_total"]),
+                "store_total": float(group["store_total"]),
+            }
+        )
 
     return {
-        "subtotal_amount": float(fees["subtotal_amount"]),
-        "platform_fee_amount": float(fees["platform_fee_amount"]),
-        "delivery_amount": float(fees["delivery_amount"]),
-        "tax_amount": float(fees["tax_amount"]),
-        "discount_amount": float(fees["discount_amount"]),
-        "total_amount": float(fees["total_amount"]),
-        "free_delivery_min_amount": float(fees["free_delivery_min_amount"]),
-        "free_delivery_applied": bool(fees["free_delivery_applied"]),
+        "cart_id": int(cart.id),
+        "items_total": float(totals["items_subtotal"]),
+        "subtotal_amount": float(totals["items_subtotal"]),
+        "platform_fee_amount": float(totals["platform_fee_amount"]),
+        "delivery_amount": float(totals["delivery_total"]),
+        "delivery_fee_total": float(totals["delivery_total"]),
+        "tax_amount": float(totals["tax_amount"]),
+        "discount_amount": float(totals["discount_amount"]),
+        "total_amount": float(totals["total_amount"]),
         "currency_code": "AUD",
-        "store_id": int(store_id),
         "delivery_pincode": delivery_pincode,
+        "stores": store_summaries,
     }
-
 
 
 @router.get("/checkout/last-details")
@@ -796,32 +1253,20 @@ def create_payment_intent_from_cart(
     current_user=Depends(get_current_user),
 ):
     """
-    Creates Stripe PaymentIntent directly from the active cart.
-    IMPORTANT: This does NOT create an order, so cancelled/failed payments do not create PENDING orders.
+    Creates Stripe PaymentIntent from the multi-store cart.
+    No order is created here.
     """
     _require_stripe_secret_key()
 
-    print("[ORDERS_PY_VERSION] metadata-fix-v4-fallback")
+    cart, items = _active_cart_items(db, current_user.tenant_id, current_user.id)
 
-    cart = _active_cart(db, current_user.tenant_id, current_user.id)
+    for item in items:
+        _validate_store(db, current_user.tenant_id, int(item.store_id))
+        _validate_cart_item_delivery_option(db, current_user.tenant_id, item)
 
-    if not cart:
-        raise HTTPException(status_code=400, detail="Cart is empty")
+    totals = _marketplace_cart_totals(db, current_user.tenant_id, items)
+    amount_cents = _amount_to_cents(totals["total_amount"])
 
-    items = db.query(CartItem).filter(CartItem.cart_id == cart.id).all()
-
-    if not items:
-        raise HTTPException(status_code=400, detail="Cart is empty")
-
-    _validate_store(db, current_user.tenant_id, payload.store_id)
-
-    subtotal = sum(Decimal(i.line_total) for i in items)
-    fees = _get_checkout_fee_breakdown(db, current_user.tenant_id, subtotal)
-    amount_cents = _amount_to_cents(fees["total_amount"])
-
-    # Apple Review / demo test account override.
-    # Stripe amount is in cents, so 50 = AUD 0.50.
-    # This does not change the order/cart totals stored in the database.
     if getattr(current_user, "mobile_number", None) == "+61400000000":
         print(
             "[APPLE_REVIEW_PAYMENT_OVERRIDE] "
@@ -833,32 +1278,24 @@ def create_payment_intent_from_cart(
     if amount_cents <= 0:
         raise HTTPException(status_code=400, detail="Invalid cart amount")
 
+    store_ids = sorted([str(store_id) for store_id in totals["stores"].keys()])
+
     payment_metadata = {
         "tenant_id": str(current_user.tenant_id),
         "user_id": str(current_user.id),
         "cart_id": str(cart.id),
-        "store_id": str(payload.store_id),
+        "store_ids": ",".join(store_ids),
         "delivery_pincode": payload.delivery_pincode or "",
         "delivery_date": payload.delivery_date or "",
         "collection_date": payload.collection_date or "",
-        "subtotal_amount": str(fees["subtotal_amount"]),
-        "platform_fee_amount": str(fees["platform_fee_amount"]),
-        "delivery_amount": str(fees["delivery_amount"]),
-        "total_amount": str(fees["total_amount"]),
-        "free_delivery_applied": str(fees["free_delivery_applied"]).lower(),
+        "subtotal_amount": str(totals["items_subtotal"]),
+        "platform_fee_amount": str(totals["platform_fee_amount"]),
+        "delivery_amount": str(totals["delivery_total"]),
+        "total_amount": str(totals["total_amount"]),
+        "marketplace_checkout": "true",
     }
 
     try:
-        print(
-            f"[CREATE_PI_INPUT] "
-            f"tenant_id={current_user.tenant_id} "
-            f"user_id={current_user.id} "
-            f"cart_id={cart.id} "
-            f"store_id={payload.store_id} "
-            f"pincode={payload.delivery_pincode} "
-            f"metadata_to_send={payment_metadata}"
-        )
-
         intent = stripe.PaymentIntent.create(
             amount=amount_cents,
             currency="aud",
@@ -868,42 +1305,39 @@ def create_payment_intent_from_cart(
 
         created_metadata = _stripe_metadata_to_dict(intent)
 
-        # Extra safety: if Stripe response does not show metadata, force-update it once.
-        # This protects the checkout flow from SDK/API response shape issues.
-        if not created_metadata.get("cart_id") or not created_metadata.get("store_id"):
-            print(
-                f"[PAYMENT_INTENT_METADATA_FORCE_UPDATE] "
-                f"id={intent.id} expected_metadata={payment_metadata} stripe_metadata_before={created_metadata}"
-            )
+        if not created_metadata.get("cart_id"):
             intent = stripe.PaymentIntent.modify(intent.id, metadata=payment_metadata)
             created_metadata = _stripe_metadata_to_dict(intent)
 
-        print(
-            f"[PAYMENT_INTENT_CREATED] "
-            f"id={intent.id} "
-            f"store_id={payload.store_id} "
-            f"cart_id={cart.id} "
-            f"user_id={current_user.id} "
-            f"tenant_id={current_user.tenant_id} "
-            f"metadata={created_metadata}"
-        )
+        store_summaries = []
+        for store_id, group in totals["stores"].items():
+            store_row = _store_display_row(db, current_user.tenant_id, store_id)
+            store_summaries.append(
+                {
+                    "store_id": store_id,
+                    "store_name": store_row["store_name"] if store_row else None,
+                    "items_count": len(group["items"]),
+                    "items_subtotal": float(group["items_subtotal"]),
+                    "delivery_total": float(group["delivery_total"]),
+                    "store_total": float(group["store_total"]),
+                }
+            )
 
         return {
             "client_secret": intent.client_secret,
             "payment_intent_id": intent.id,
-            # Backward-compatible amount field. This is now the grand total charged by Stripe.
-            "amount": float(fees["total_amount"]),
-            "subtotal_amount": float(fees["subtotal_amount"]),
-            "platform_fee_amount": float(fees["platform_fee_amount"]),
-            "delivery_amount": float(fees["delivery_amount"]),
-            "tax_amount": float(fees["tax_amount"]),
-            "discount_amount": float(fees["discount_amount"]),
-            "total_amount": float(fees["total_amount"]),
-            "free_delivery_min_amount": float(fees["free_delivery_min_amount"]),
-            "free_delivery_applied": bool(fees["free_delivery_applied"]),
+            "amount": float(totals["total_amount"]),
+            "subtotal_amount": float(totals["items_subtotal"]),
+            "platform_fee_amount": float(totals["platform_fee_amount"]),
+            "delivery_amount": float(totals["delivery_total"]),
+            "delivery_fee_total": float(totals["delivery_total"]),
+            "tax_amount": float(totals["tax_amount"]),
+            "discount_amount": float(totals["discount_amount"]),
+            "total_amount": float(totals["total_amount"]),
             "currency_code": "AUD",
             "cart_id": int(cart.id),
-            "store_id": int(payload.store_id),
+            "store_ids": [int(s) for s in totals["stores"].keys()],
+            "stores": store_summaries,
             "delivery_date": payload.delivery_date,
             "collection_date": payload.collection_date,
             "tenant_id": int(current_user.tenant_id),
@@ -926,14 +1360,8 @@ def create_order_after_payment(
     current_user=Depends(get_current_user),
 ):
     """
-    Creates a CONFIRMED order only after Stripe payment has succeeded.
-
-    Stable flow:
-    - Flutter creates PaymentIntent from the active cart.
-    - The backend stores tenant/user/cart/store in Stripe metadata.
-    - After payment succeeds, this endpoint reads cart_id and store_id back from Stripe metadata.
-
-    This avoids tenant/user/cart/store mismatch from stale Flutter local storage or a refreshed JWT.
+    Creates separate CONFIRMED store orders after Stripe payment succeeds.
+    One customer payment can create multiple store orders.
     """
     _require_stripe_secret_key()
 
@@ -950,49 +1378,12 @@ def create_order_after_payment(
 
     metadata = _stripe_metadata_to_dict(intent)
 
-    print(
-        f"[STRIPE_METADATA_CHECK] "
-        f"current_tenant={getattr(current_user, 'tenant_id', None)} "
-        f"current_user={getattr(current_user, 'id', None)} "
-        f"payload_store_id={payload.store_id} "
-        f"payment_intent_id={payload.payment_intent_id} "
-        f"stripe_status={getattr(intent, 'status', None)} "
-        f"stripe_metadata={metadata}"
-    )
-
     if intent.status != "succeeded":
         raise HTTPException(
             status_code=400,
             detail=f"Payment not successful. Stripe status: {intent.status}",
         )
 
-    metadata_cart_id = int(metadata.get("cart_id", 0) or 0)
-    metadata_store_id = int(metadata.get("store_id", 0) or 0)
-    metadata_tenant_id = int(metadata.get("tenant_id", 0) or 0)
-    metadata_user_id = int(metadata.get("user_id", 0) or 0)
-
-    # If metadata is missing, try one forced retrieve/update path first.
-    # If still missing, fall back to the current active cart + payload.store_id so checkout can complete.
-    if metadata_cart_id <= 0 or metadata_store_id <= 0:
-        print(
-            f"[PAYMENT_METADATA_MISSING_WARNING] "
-            f"payment_intent_id={payload.payment_intent_id} "
-            f"metadata={metadata} "
-            f"fallback_user_id={current_user.id} "
-            f"fallback_tenant_id={current_user.tenant_id} "
-            f"fallback_store_id={payload.store_id}"
-        )
-
-    if metadata_store_id <= 0:
-        metadata_store_id = int(payload.store_id or 0)
-
-    if metadata_tenant_id <= 0:
-        metadata_tenant_id = int(current_user.tenant_id)
-
-    if metadata_user_id <= 0:
-        metadata_user_id = int(current_user.id)
-
-    # Idempotency: if this payment already produced an order, return that order.
     existing_payment = (
         db.query(Payment)
         .filter(Payment.payment_intent_id == payload.payment_intent_id)
@@ -1000,30 +1391,35 @@ def create_order_after_payment(
     )
 
     if existing_payment:
-        existing_order = db.query(Order).filter(Order.id == existing_payment.order_id).first()
-        if existing_order:
-            return {
-                "message": "Order already created",
-                "order_id": int(existing_order.id),
-                "order_number": existing_order.order_number,
-                "order_status": existing_order.order_status,
-                "payment_status": existing_order.payment_status,
-                "amount": float(existing_order.total_amount),
-                "currency_code": existing_order.currency_code,
-                "subtotal_amount": float(existing_order.subtotal_amount),
-                "platform_fee_amount": _order_platform_fee_value(db, existing_order),
-                "delivery_amount": float(existing_order.delivery_amount),
-                "tax_amount": float(existing_order.tax_amount),
-                "discount_amount": float(existing_order.discount_amount),
-                "total_amount": float(existing_order.total_amount),
-                "store_id": int(existing_order.store_id) if existing_order.store_id else None,
-                "delivery_pincode": existing_order.delivery_pincode,
-                "delivery_date": _order_date_values(db, existing_order)["delivery_date"],
-                "collection_date": _order_date_values(db, existing_order)["collection_date"],
-                "delivery_address_text": existing_order.delivery_address_text,
-                "customer_mobile": existing_order.customer_mobile,
-                "customer_email": existing_order.customer_email,
-            }
+        existing_orders = (
+            db.query(Order)
+            .join(Payment, Payment.order_id == Order.id)
+            .filter(Payment.payment_intent_id == payload.payment_intent_id)
+            .order_by(Order.id.asc())
+            .all()
+        )
+
+        return {
+            "message": "Order already created",
+            "payment_intent_id": payload.payment_intent_id,
+            "orders": [
+                {
+                    "order_id": int(o.id),
+                    "order_number": o.order_number,
+                    "order_status": o.order_status,
+                    "payment_status": o.payment_status,
+                    "amount": float(o.total_amount),
+                    "currency_code": o.currency_code,
+                    "store_id": int(o.store_id) if o.store_id else None,
+                }
+                for o in existing_orders
+            ],
+            "order_id": int(existing_orders[0].id) if existing_orders else int(existing_payment.order_id),
+        }
+
+    metadata_cart_id = int(metadata.get("cart_id", 0) or 0)
+    metadata_tenant_id = int(metadata.get("tenant_id", 0) or 0)
+    metadata_user_id = int(metadata.get("user_id", 0) or 0)
 
     if metadata_cart_id > 0:
         cart_query = db.query(Cart).filter(Cart.id == metadata_cart_id)
@@ -1042,7 +1438,6 @@ def create_order_after_payment(
         raise HTTPException(status_code=400, detail="Payment cart not found")
 
     if cart.status != "ACTIVE":
-        # Allow idempotency via existing_payment above, but block creating a second order from an old/closed cart.
         raise HTTPException(status_code=400, detail=f"Cart is not active. Current status: {cart.status}")
 
     items = db.query(CartItem).filter(CartItem.cart_id == cart.id).all()
@@ -1050,148 +1445,186 @@ def create_order_after_payment(
     if not items:
         raise HTTPException(status_code=400, detail="Cart is empty")
 
+    for item in items:
+        if not item.store_id:
+            raise HTTPException(status_code=400, detail=f"Cart item {item.id} has no store_id")
+        if not item.delivery_option_id:
+            raise HTTPException(status_code=400, detail=f"Cart item {item.id} has no delivery option")
+        _validate_store(db, cart.tenant_id, int(item.store_id))
+        _validate_cart_item_delivery_option(db, cart.tenant_id, item)
+        _validate_cart_item_inventory(db, cart.tenant_id, item)
+
+    totals = _marketplace_cart_totals(db, cart.tenant_id, items)
+    expected_amount_cents = _amount_to_cents(totals["total_amount"])
+
+    if getattr(current_user, "mobile_number", None) == "+61400000000":
+        expected_amount_cents = 50
+
+    if int(intent.amount) != expected_amount_cents:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Payment amount does not match checkout total. "
+                f"stripe_amount_cents={int(intent.amount)}, "
+                f"expected_amount_cents={expected_amount_cents}"
+            ),
+        )
+
+    delivery_date = _clean_order_date(payload.delivery_date or metadata.get("delivery_date"))
+    collection_date = _clean_order_date(payload.collection_date or metadata.get("collection_date"))
+
+    created_orders = []
+
     try:
-        _validate_store(db, cart.tenant_id, metadata_store_id)
+        for store_id, group in totals["stores"].items():
+            store_items = group["items"]
 
-        subtotal = sum(Decimal(i.line_total) for i in items)
-        fees = _get_checkout_fee_breakdown(db, cart.tenant_id, subtotal)
-        expected_amount_cents = _amount_to_cents(fees["total_amount"])
+            for item in store_items:
+                _reserve_cart_item_stock(
+                    db=db,
+                    tenant_id=cart.tenant_id,
+                    store_id=store_id,
+                    item=item,
+                )
 
-        # Apple Review / demo test account override.
-        # This must match the 50-cent PaymentIntent created above.
-        if getattr(current_user, "mobile_number", None) == "+61400000000":
-            print(
-                "[APPLE_REVIEW_PAYMENT_VALIDATION_OVERRIDE] "
-                f"user_id={current_user.id} mobile={current_user.mobile_number} "
-                f"original_expected_amount_cents={expected_amount_cents} "
-                f"expected_amount_cents=50 stripe_amount_cents={int(intent.amount)}"
-            )
-            expected_amount_cents = 50
+            store_subtotal = group["items_subtotal"].quantize(Decimal("0.01"))
+            store_delivery_total = group["delivery_total"].quantize(Decimal("0.01"))
+            store_total = (store_subtotal + store_delivery_total).quantize(Decimal("0.01"))
 
-        if int(intent.amount) != expected_amount_cents:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Payment amount does not match checkout total. "
-                    f"stripe_amount_cents={int(intent.amount)}, "
-                    f"expected_amount_cents={expected_amount_cents}"
-                ),
-            )
+            # Put platform fee on first store order only to avoid double-counting.
+            platform_fee_for_order = totals["platform_fee_amount"] if not created_orders else Decimal("0.00")
+            order_total = (store_total + platform_fee_for_order).quantize(Decimal("0.01"))
 
-        for item in items:
-            _reserve_store_stock(
-                db=db,
+            order = Order(
                 tenant_id=cart.tenant_id,
-                store_id=metadata_store_id,
-                product_id=item.product_id,
-                quantity=item.quantity,
+                user_id=cart.user_id,
+                cart_id=cart.id,
+                order_number=f"ORD{int(datetime.utcnow().timestamp())}-{store_id}",
+                order_status="CONFIRMED",
+                payment_status="SUCCESS",
+                subtotal_amount=store_subtotal,
+                tax_amount=Decimal("0.00"),
+                delivery_amount=store_delivery_total,
+                discount_amount=Decimal("0.00"),
+                total_amount=order_total,
+                currency_code="AUD",
+                delivery_address_text=payload.delivery_address_text,
+                customer_mobile=getattr(current_user, "mobile_number", None),
+                customer_email=payload.customer_email or getattr(current_user, "email", None),
+                notes=payload.notes,
+                placed_at=datetime.utcnow(),
+                store_id=store_id,
+                delivery_pincode=payload.delivery_pincode or metadata.get("delivery_pincode", ""),
             )
 
-        delivery_date = _clean_order_date(payload.delivery_date or metadata.get("delivery_date"))
-        collection_date = _clean_order_date(payload.collection_date or metadata.get("collection_date"))
+            if hasattr(order, "store_subtotal_amount"):
+                order.store_subtotal_amount = store_subtotal
+            if hasattr(order, "store_base_amount"):
+                order.store_base_amount = store_subtotal
+            if hasattr(order, "delivery_fee_total"):
+                order.delivery_fee_total = store_delivery_total
 
-        order = Order(
-            tenant_id=cart.tenant_id,
-            user_id=cart.user_id,
-            cart_id=cart.id,
-            order_number=f"ORD{int(datetime.utcnow().timestamp())}",
-            order_status="CONFIRMED",
-            payment_status="SUCCESS",
-            subtotal_amount=fees["subtotal_amount"],
-            tax_amount=fees["tax_amount"],
-            delivery_amount=fees["delivery_amount"],
-            discount_amount=fees["discount_amount"],
-            total_amount=fees["total_amount"],
-            currency_code="AUD",
-            delivery_address_text=payload.delivery_address_text,
-            customer_mobile=getattr(current_user, "mobile_number", None),
-            customer_email=payload.customer_email or getattr(current_user, "email", None),
-            notes=payload.notes,
-            placed_at=datetime.utcnow(),
-            store_id=metadata_store_id,
-            delivery_pincode=payload.delivery_pincode or metadata.get("delivery_pincode", ""),
-        )
+            _set_order_platform_fee(order, platform_fee_for_order)
 
-        _set_order_platform_fee(order, fees["platform_fee_amount"])
+            db.add(order)
+            db.flush()
 
-        db.add(order)
-        db.flush()
+            _update_order_extra_fields(
+                db=db,
+                order_id=order.id,
+                platform_fee_amount=platform_fee_for_order,
+                delivery_date=delivery_date,
+                collection_date=collection_date,
+            )
 
-        _update_order_extra_fields(
-            db=db,
-            order_id=order.id,
-            platform_fee_amount=fees["platform_fee_amount"],
-            delivery_date=delivery_date,
-            collection_date=collection_date,
-        )
+            for item in store_items:
+                db.add(
+                    OrderItem(
+                        order_id=order.id,
+                        tenant_id=cart.tenant_id,
+                        user_id=cart.user_id,
+                        product_id=item.product_id,
+                        product_variant_id=getattr(item, "product_variant_id", None),
+                        store_id=item.store_id,
+                        delivery_option_id=item.delivery_option_id,
+                        delivery_method_code=item.delivery_method_code,
+                        delivery_label=item.delivery_label,
+                        delivery_fee_snapshot=item.delivery_fee_snapshot,
+                        delivery_eta_snapshot=item.delivery_eta_snapshot,
+                        product_name_snapshot=item.product_name_snapshot,
+                        product_image_snapshot=item.product_image_snapshot,
+                        sku_snapshot=getattr(item, "variant_sku_snapshot", None),
+                        variant_title_snapshot=getattr(item, "variant_title_snapshot", None),
+                        variant_sku_snapshot=getattr(item, "variant_sku_snapshot", None),
+                        variant_options_snapshot=getattr(item, "variant_options_snapshot", None),
+                        unit_price_snapshot=item.unit_price_snapshot,
+                        quantity=item.quantity,
+                        line_total=item.line_total,
+                    )
+                )
 
-        for item in items:
+            db.flush()
+
             db.add(
-                OrderItem(
-                    order_id=order.id,
+                Payment(
                     tenant_id=cart.tenant_id,
                     user_id=cart.user_id,
-                    product_id=item.product_id,
-                    product_name_snapshot=item.product_name_snapshot,
-                    product_image_snapshot=item.product_image_snapshot,
-                    sku_snapshot=None,
-                    unit_price_snapshot=item.unit_price_snapshot,
-                    quantity=item.quantity,
-                    line_total=item.line_total,
+                    order_id=order.id,
+                    payment_provider=payload.payment_provider,
+                    payment_reference=payload.payment_intent_id,
+                    payment_intent_id=payload.payment_intent_id if len(created_orders) == 0 else None,
+                    amount=order_total,
+                    currency_code="AUD",
+                    payment_status="SUCCESS",
+                    raw_response_json=_stripe_to_dict(intent),
+                    paid_at=datetime.utcnow(),
                 )
             )
 
-        # IMPORTANT: make OrderItem rows visible to email_notifications.py
-        # before store email is generated inside this transaction.
-        db.flush()
-
-        db.add(
-            Payment(
-                tenant_id=cart.tenant_id,
-                user_id=cart.user_id,
-                order_id=order.id,
-                payment_provider=payload.payment_provider,
-                payment_reference=payload.payment_intent_id,
-                payment_intent_id=payload.payment_intent_id,
-                amount=fees["total_amount"],
-                currency_code="AUD",
-                payment_status="SUCCESS",
-                raw_response_json=_stripe_to_dict(intent),
-                paid_at=datetime.utcnow(),
-            )
-        )
+            _notify_store_users_new_order(db, order)
+            created_orders.append(order)
 
         cart.status = "CHECKED_OUT"
 
-        _notify_store_users_new_order(db, order)
-
         db.commit()
-        db.refresh(order)
+
+        for order in created_orders:
+            db.refresh(order)
 
         return {
-            "message": "Order created after successful payment",
-            "order_id": int(order.id),
-            "order_number": order.order_number,
-            "order_status": order.order_status,
-            "payment_status": order.payment_status,
-            "amount": float(order.total_amount),
-            "subtotal_amount": float(order.subtotal_amount),
-            "platform_fee_amount": float(fees["platform_fee_amount"]),
-            "delivery_amount": float(order.delivery_amount),
-            "tax_amount": float(order.tax_amount),
-            "discount_amount": float(order.discount_amount),
-            "total_amount": float(order.total_amount),
-            "currency_code": order.currency_code,
-            "store_id": int(order.store_id) if order.store_id else None,
-            "delivery_pincode": order.delivery_pincode,
-            "delivery_date": _order_date_values(db, order)["delivery_date"],
-            "collection_date": _order_date_values(db, order)["collection_date"],
-            "delivery_address_text": order.delivery_address_text,
-            "customer_mobile": order.customer_mobile,
-            "customer_email": order.customer_email,
-            "delivery_address_text": order.delivery_address_text,
-            "customer_mobile": order.customer_mobile,
-            "customer_email": order.customer_email,
+            "message": "Store-wise orders created after successful payment",
+            "payment_intent_id": payload.payment_intent_id,
+            "orders": [
+                {
+                    "order_id": int(order.id),
+                    "order_number": order.order_number,
+                    "order_status": order.order_status,
+                    "payment_status": order.payment_status,
+                    "amount": float(order.total_amount),
+                    "subtotal_amount": float(order.subtotal_amount),
+                    "platform_fee_amount": _order_platform_fee_value(db, order),
+                    "delivery_amount": float(order.delivery_amount),
+                    "tax_amount": float(order.tax_amount),
+                    "discount_amount": float(order.discount_amount),
+                    "total_amount": float(order.total_amount),
+                    "currency_code": order.currency_code,
+                    "store_id": int(order.store_id) if order.store_id else None,
+                    "delivery_pincode": order.delivery_pincode,
+                    "delivery_date": _order_date_values(db, order)["delivery_date"],
+                    "collection_date": _order_date_values(db, order)["collection_date"],
+                    "delivery_address_text": order.delivery_address_text,
+                    "customer_mobile": order.customer_mobile,
+                    "customer_email": order.customer_email,
+                }
+                for order in created_orders
+            ],
+            # Backward compatibility for existing Flutter code.
+            "order_id": int(created_orders[0].id) if created_orders else None,
+            "order_number": created_orders[0].order_number if created_orders else None,
+            "order_status": created_orders[0].order_status if created_orders else None,
+            "payment_status": created_orders[0].payment_status if created_orders else None,
+            "total_amount": float(totals["total_amount"]),
+            "currency_code": "AUD",
         }
 
     except HTTPException:
@@ -1211,127 +1644,161 @@ def create_order(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    cart = _active_cart(db, current_user.tenant_id, current_user.id)
+    """
+    Legacy non-Stripe order creation.
+    For marketplace carts this creates separate PENDING orders per store.
+    Prefer /payments/create-payment-intent-from-cart + /checkout/create-order-after-payment.
+    """
+    cart, items = _active_cart_items(db, current_user.tenant_id, current_user.id)
 
-    if not cart:
-        raise HTTPException(status_code=400, detail="Cart is empty")
-
-    items = db.query(CartItem).filter(CartItem.cart_id == cart.id).all()
-
-    if not items:
-        raise HTTPException(status_code=400, detail="Cart is empty")
-
-    store_id = getattr(payload, "store_id", None)
     delivery_pincode = getattr(payload, "delivery_pincode", None)
     delivery_date = _clean_order_date(getattr(payload, "delivery_date", None))
     collection_date = _clean_order_date(getattr(payload, "collection_date", None))
 
-    if not store_id:
-        raise HTTPException(status_code=400, detail="store_id is required to place order")
+    for item in items:
+        _validate_store(db, current_user.tenant_id, int(item.store_id))
+        _validate_cart_item_delivery_option(db, current_user.tenant_id, item)
 
-    _validate_store(db, current_user.tenant_id, store_id)
+    totals = _marketplace_cart_totals(db, current_user.tenant_id, items)
 
-    subtotal = sum(Decimal(i.line_total) for i in items)
-    fees = _get_checkout_fee_breakdown(db, current_user.tenant_id, subtotal)
+    created_orders = []
 
     try:
-        for item in items:
-            _reserve_store_stock(
-                db=db,
+        for store_id, group in totals["stores"].items():
+            store_items = group["items"]
+
+            for item in store_items:
+                _reserve_cart_item_stock(
+                    db=db,
+                    tenant_id=current_user.tenant_id,
+                    store_id=store_id,
+                    item=item,
+                )
+
+            store_subtotal = group["items_subtotal"].quantize(Decimal("0.01"))
+            store_delivery_total = group["delivery_total"].quantize(Decimal("0.01"))
+            store_total = (store_subtotal + store_delivery_total).quantize(Decimal("0.01"))
+
+            platform_fee_for_order = totals["platform_fee_amount"] if not created_orders else Decimal("0.00")
+            order_total = (store_total + platform_fee_for_order).quantize(Decimal("0.01"))
+
+            order = Order(
                 tenant_id=current_user.tenant_id,
+                user_id=current_user.id,
+                cart_id=cart.id,
+                order_number=f"ORD{int(datetime.utcnow().timestamp())}-{store_id}",
+                order_status="PENDING",
+                payment_status="PENDING",
+                subtotal_amount=store_subtotal,
+                tax_amount=Decimal("0.00"),
+                delivery_amount=store_delivery_total,
+                discount_amount=Decimal("0.00"),
+                total_amount=order_total,
+                currency_code="AUD",
+                delivery_address_text=payload.delivery_address_text,
+                customer_mobile=current_user.mobile_number,
+                customer_email=payload.customer_email or current_user.email,
+                notes=payload.notes,
+                placed_at=datetime.utcnow(),
                 store_id=store_id,
-                product_id=item.product_id,
-                quantity=item.quantity,
+                delivery_pincode=delivery_pincode,
             )
 
-        order = Order(
-            tenant_id=current_user.tenant_id,
-            user_id=current_user.id,
-            cart_id=cart.id,
-            order_number=f"ORD{int(datetime.utcnow().timestamp())}",
-            order_status="PENDING",
-            payment_status="PENDING",
-            subtotal_amount=fees["subtotal_amount"],
-            tax_amount=fees["tax_amount"],
-            delivery_amount=fees["delivery_amount"],
-            discount_amount=fees["discount_amount"],
-            total_amount=fees["total_amount"],
-            currency_code="AUD",
-            delivery_address_text=payload.delivery_address_text,
-            customer_mobile=current_user.mobile_number,
-            customer_email=payload.customer_email or current_user.email,
-            notes=payload.notes,
-            placed_at=datetime.utcnow(),
-            store_id=store_id,
-            delivery_pincode=delivery_pincode,
-        )
+            if hasattr(order, "store_subtotal_amount"):
+                order.store_subtotal_amount = store_subtotal
+            if hasattr(order, "store_base_amount"):
+                order.store_base_amount = store_subtotal
+            if hasattr(order, "delivery_fee_total"):
+                order.delivery_fee_total = store_delivery_total
 
-        _set_order_platform_fee(order, fees["platform_fee_amount"])
+            _set_order_platform_fee(order, platform_fee_for_order)
 
-        db.add(order)
-        db.flush()
+            db.add(order)
+            db.flush()
 
-        _update_order_extra_fields(
-            db=db,
-            order_id=order.id,
-            platform_fee_amount=fees["platform_fee_amount"],
-            delivery_date=delivery_date,
-            collection_date=collection_date,
-        )
+            _update_order_extra_fields(
+                db=db,
+                order_id=order.id,
+                platform_fee_amount=platform_fee_for_order,
+                delivery_date=delivery_date,
+                collection_date=collection_date,
+            )
 
-        #_notify_store_users_new_order(db, order)
+            for item in store_items:
+                db.add(
+                    OrderItem(
+                        order_id=order.id,
+                        tenant_id=current_user.tenant_id,
+                        user_id=current_user.id,
+                        product_id=item.product_id,
+                        product_variant_id=getattr(item, "product_variant_id", None),
+                        store_id=item.store_id,
+                        delivery_option_id=item.delivery_option_id,
+                        delivery_method_code=item.delivery_method_code,
+                        delivery_label=item.delivery_label,
+                        delivery_fee_snapshot=item.delivery_fee_snapshot,
+                        delivery_eta_snapshot=item.delivery_eta_snapshot,
+                        product_name_snapshot=item.product_name_snapshot,
+                        product_image_snapshot=item.product_image_snapshot,
+                        sku_snapshot=getattr(item, "variant_sku_snapshot", None),
+                        variant_title_snapshot=getattr(item, "variant_title_snapshot", None),
+                        variant_sku_snapshot=getattr(item, "variant_sku_snapshot", None),
+                        variant_options_snapshot=getattr(item, "variant_options_snapshot", None),
+                        unit_price_snapshot=item.unit_price_snapshot,
+                        quantity=item.quantity,
+                        line_total=item.line_total,
+                    )
+                )
 
-        for item in items:
             db.add(
-                OrderItem(
-                    order_id=order.id,
+                Payment(
                     tenant_id=current_user.tenant_id,
                     user_id=current_user.id,
-                    product_id=item.product_id,
-                    product_name_snapshot=item.product_name_snapshot,
-                    product_image_snapshot=item.product_image_snapshot,
-                    sku_snapshot=None,
-                    unit_price_snapshot=item.unit_price_snapshot,
-                    quantity=item.quantity,
-                    line_total=item.line_total,
+                    order_id=order.id,
+                    payment_provider=payload.payment_provider,
+                    amount=order_total,
+                    currency_code="AUD",
+                    payment_status="CREATED",
                 )
             )
 
-        db.add(
-            Payment(
-                tenant_id=current_user.tenant_id,
-                user_id=current_user.id,
-                order_id=order.id,
-                payment_provider=payload.payment_provider,
-                amount=fees["total_amount"],
-                currency_code="AUD",
-                payment_status="CREATED",
-            )
-        )
+            created_orders.append(order)
 
         cart.status = "CHECKED_OUT"
 
         db.commit()
-        db.refresh(order)
+
+        for order in created_orders:
+            db.refresh(order)
 
         return {
-            "order_id": int(order.id),
-            "order_number": order.order_number,
-            "amount": float(order.total_amount),
-            "subtotal_amount": float(order.subtotal_amount),
-            "platform_fee_amount": float(fees["platform_fee_amount"]),
-            "delivery_amount": float(order.delivery_amount),
-            "tax_amount": float(order.tax_amount),
-            "discount_amount": float(order.discount_amount),
-            "total_amount": float(order.total_amount),
-            "currency_code": order.currency_code,
-            "payment_provider": payload.payment_provider,
-            "payment_status": "CREATED",
-            "order_status": order.order_status,
-            "store_id": int(order.store_id) if order.store_id else None,
-            "delivery_pincode": order.delivery_pincode,
-            "delivery_date": _order_date_values(db, order)["delivery_date"],
-            "collection_date": _order_date_values(db, order)["collection_date"],
+            "message": "Store-wise orders created",
+            "orders": [
+                {
+                    "order_id": int(order.id),
+                    "order_number": order.order_number,
+                    "amount": float(order.total_amount),
+                    "subtotal_amount": float(order.subtotal_amount),
+                    "platform_fee_amount": _order_platform_fee_value(db, order),
+                    "delivery_amount": float(order.delivery_amount),
+                    "tax_amount": float(order.tax_amount),
+                    "discount_amount": float(order.discount_amount),
+                    "total_amount": float(order.total_amount),
+                    "currency_code": order.currency_code,
+                    "payment_provider": payload.payment_provider,
+                    "payment_status": "CREATED",
+                    "order_status": order.order_status,
+                    "store_id": int(order.store_id) if order.store_id else None,
+                    "delivery_pincode": order.delivery_pincode,
+                    "delivery_date": _order_date_values(db, order)["delivery_date"],
+                    "collection_date": _order_date_values(db, order)["collection_date"],
+                }
+                for order in created_orders
+            ],
+            "order_id": int(created_orders[0].id) if created_orders else None,
+            "order_number": created_orders[0].order_number if created_orders else None,
+            "total_amount": float(totals["total_amount"]),
+            "currency_code": "AUD",
         }
 
     except HTTPException:
@@ -1580,16 +2047,7 @@ def store_order_detail(
         "placed_at": order.placed_at.isoformat() if order.placed_at else None,
         "created_at": order.created_at.isoformat() if order.created_at else None,
         "items": [
-            {
-                "order_item_id": int(item.id),
-                "product_id": int(item.product_id) if item.product_id else None,
-                "product_name": item.product_name_snapshot,
-                "product_image": item.product_image_snapshot,
-                "sku": item.sku_snapshot,
-                "unit_price": float(item.unit_price_snapshot),
-                "quantity": int(item.quantity),
-                "line_total": float(item.line_total),
-            }
+            _order_item_dict(item)
             for item in items
         ],
     }
@@ -1861,16 +2319,7 @@ def order_detail(
         "placed_at": order.placed_at.isoformat() if order.placed_at else None,
         "created_at": order.created_at.isoformat() if order.created_at else None,
         "items": [
-            {
-                "order_item_id": int(item.id),
-                "product_id": int(item.product_id) if item.product_id else None,
-                "product_name": item.product_name_snapshot,
-                "product_image": item.product_image_snapshot,
-                "sku": item.sku_snapshot,
-                "unit_price": float(item.unit_price_snapshot),
-                "quantity": int(item.quantity),
-                "line_total": float(item.line_total),
-            }
+            _order_item_dict(item)
             for item in items
         ],
     }

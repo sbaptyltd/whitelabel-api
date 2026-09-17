@@ -224,293 +224,6 @@ def _delivery_options_for_product_store(
     return options
 
 
-
-def _variant_payload_for_product(
-    db: Session,
-    tenant_id: int,
-    product_id: int,
-    store_id: int | None = None,
-):
-    """Return selectable options and purchasable variants for one product.
-
-    When store_id is supplied, price/stock come from store_product_variants.
-    A variant that is not mapped to that store is returned with zero store stock
-    so the UI can show it as unavailable instead of overselling it.
-    """
-
-    option_rows = db.execute(
-        text(
-            """
-            SELECT
-                po.id AS option_id,
-                po.option_name,
-                po.display_type,
-                po.sort_order AS option_sort_order,
-                pov.id AS option_value_id,
-                pov.option_value,
-                pov.swatch_hex,
-                pov.image_url AS option_value_image_url,
-                pov.sort_order AS value_sort_order
-            FROM product_options po
-            LEFT JOIN product_option_values pov
-              ON pov.option_id = po.id
-             AND pov.tenant_id = po.tenant_id
-             AND pov.is_active = 1
-            WHERE po.tenant_id = :tenant_id
-              AND po.product_id = :product_id
-              AND po.is_active = 1
-            ORDER BY
-                po.sort_order ASC,
-                po.id ASC,
-                pov.sort_order ASC,
-                pov.id ASC
-            """
-        ),
-        {
-            "tenant_id": tenant_id,
-            "product_id": product_id,
-        },
-    ).mappings().all()
-
-    options_by_id = {}
-    for r in option_rows:
-        option_id = int(r["option_id"])
-
-        if option_id not in options_by_id:
-            options_by_id[option_id] = {
-                "id": option_id,
-                "option_id": option_id,
-                "name": r["option_name"],
-                "option_name": r["option_name"],
-                "display_type": r["display_type"] or "TEXT",
-                "sort_order": int(r["option_sort_order"] or 0),
-                "values": [],
-            }
-
-        if r["option_value_id"] is not None:
-            options_by_id[option_id]["values"].append(
-                {
-                    "id": int(r["option_value_id"]),
-                    "option_value_id": int(r["option_value_id"]),
-                    "value": r["option_value"],
-                    "option_value": r["option_value"],
-                    "swatch_hex": r["swatch_hex"],
-                    "image_url": _image_url_from_gs_uri(r["option_value_image_url"]),
-                    "sort_order": int(r["value_sort_order"] or 0),
-                }
-            )
-
-    options = list(options_by_id.values())
-
-    params = {
-        "tenant_id": tenant_id,
-        "product_id": product_id,
-    }
-
-    if store_id is not None:
-        params["store_id"] = store_id
-        store_select = """
-            spv.id AS store_variant_id,
-            spv.stock_qty AS store_stock_qty,
-            spv.reserved_qty AS store_reserved_qty,
-            spv.local_price AS store_local_price,
-        """
-        store_join = """
-            LEFT JOIN store_product_variants spv
-              ON spv.product_variant_id = pv.id
-             AND spv.tenant_id = pv.tenant_id
-             AND spv.store_id = :store_id
-             AND spv.is_active = 1
-        """
-    else:
-        store_select = """
-            NULL AS store_variant_id,
-            NULL AS store_stock_qty,
-            NULL AS store_reserved_qty,
-            NULL AS store_local_price,
-        """
-        store_join = ""
-
-    variant_rows = db.execute(
-        text(
-            f"""
-            SELECT
-                pv.id AS variant_id,
-                pv.variant_title,
-                pv.sku,
-                pv.barcode,
-                pv.base_price,
-                pv.sale_price,
-                pv.currency_code,
-                pv.stock_qty AS variant_stock_qty,
-                pv.image_url,
-                pv.gallery_json,
-                pv.weight_grams,
-                pv.delivery_surcharge,
-                pv.sort_order,
-                pv.is_default,
-                pv.is_active,
-                {store_select}
-                pvv.option_id,
-                pvv.option_value_id,
-                po.option_name,
-                pov.option_value
-            FROM product_variants pv
-            {store_join}
-            LEFT JOIN product_variant_values pvv
-              ON pvv.variant_id = pv.id
-            LEFT JOIN product_options po
-              ON po.id = pvv.option_id
-             AND po.tenant_id = pv.tenant_id
-            LEFT JOIN product_option_values pov
-              ON pov.id = pvv.option_value_id
-             AND pov.option_id = pvv.option_id
-             AND pov.tenant_id = pv.tenant_id
-            WHERE pv.tenant_id = :tenant_id
-              AND pv.product_id = :product_id
-              AND pv.is_active = 1
-            ORDER BY
-                pv.sort_order ASC,
-                pv.id ASC,
-                po.sort_order ASC,
-                po.id ASC
-            """
-        ),
-        params,
-    ).mappings().all()
-
-    variants_by_id = {}
-
-    for r in variant_rows:
-        variant_id = int(r["variant_id"])
-
-        if variant_id not in variants_by_id:
-            if store_id is not None:
-                mapped_to_store = r["store_variant_id"] is not None
-                stock_qty = int(r["store_stock_qty"] or 0) if mapped_to_store else 0
-                reserved_qty = int(r["store_reserved_qty"] or 0) if mapped_to_store else 0
-                local_price = r["store_local_price"] if mapped_to_store else None
-            else:
-                mapped_to_store = True
-                stock_qty = int(r["variant_stock_qty"] or 0)
-                reserved_qty = 0
-                local_price = None
-
-            available_stock = max(stock_qty - reserved_qty, 0)
-            default_price = r["sale_price"] if r["sale_price"] is not None else r["base_price"]
-            final_price = local_price if local_price is not None else default_price
-
-            gallery_images = _gallery_urls_from_json(r["gallery_json"])
-
-            variants_by_id[variant_id] = {
-                "id": variant_id,
-                "variant_id": variant_id,
-                "title": r["variant_title"],
-                "variant_title": r["variant_title"],
-                "sku": r["sku"],
-                "barcode": r["barcode"],
-                "price": float(final_price or 0),
-                "base_price": float(r["base_price"] or 0),
-                "sale_price": float(r["sale_price"]) if r["sale_price"] is not None else None,
-                "local_price": float(local_price) if local_price is not None else None,
-                "currency_code": r["currency_code"],
-                "stock_qty": stock_qty,
-                "reserved_qty": reserved_qty,
-                "available_stock": available_stock,
-                "is_available": available_stock > 0,
-                "is_available_at_store": mapped_to_store if store_id is not None else True,
-                "image_url": _image_url_from_gs_uri(r["image_url"]),
-                "gallery_json": gallery_images,
-                "gallery_images": gallery_images,
-                "images": gallery_images,
-                "weight_grams": int(r["weight_grams"]) if r["weight_grams"] is not None else None,
-                "delivery_surcharge": float(r["delivery_surcharge"] or 0),
-                "sort_order": int(r["sort_order"] or 0),
-                "is_default": bool(r["is_default"]),
-                "is_active": bool(r["is_active"]),
-                "option_value_ids": [],
-                "option_values": [],
-                "selected_options": {},
-            }
-
-        variant = variants_by_id[variant_id]
-
-        if r["option_value_id"] is not None:
-            option_id = int(r["option_id"])
-            option_value_id = int(r["option_value_id"])
-
-            if option_value_id not in variant["option_value_ids"]:
-                variant["option_value_ids"].append(option_value_id)
-                variant["option_values"].append(
-                    {
-                        "option_id": option_id,
-                        "option_name": r["option_name"],
-                        "option_value_id": option_value_id,
-                        "value": r["option_value"],
-                        "option_value": r["option_value"],
-                    }
-                )
-
-            if r["option_name"]:
-                variant["selected_options"][r["option_name"]] = r["option_value"]
-
-    variants = list(variants_by_id.values())
-
-    prices = [v["price"] for v in variants]
-    price_min = min(prices) if prices else None
-    price_max = max(prices) if prices else None
-    total_stock = sum(v["stock_qty"] for v in variants)
-    total_available_stock = sum(v["available_stock"] for v in variants)
-
-    default_variant_id = None
-    for v in variants:
-        if v["is_default"]:
-            default_variant_id = v["id"]
-            break
-
-    if default_variant_id is None:
-        for v in variants:
-            if v["available_stock"] > 0:
-                default_variant_id = v["id"]
-                break
-
-    if default_variant_id is None and variants:
-        default_variant_id = variants[0]["id"]
-
-    return {
-        "options": options,
-        "variants": variants,
-        "variant_count": len(variants),
-        "default_variant_id": default_variant_id,
-        "variant_price_min": price_min,
-        "variant_price_max": price_max,
-        "variant_stock_qty": total_stock,
-        "variant_available_stock": total_available_stock,
-    }
-
-
-def _apply_variant_payload(product_dict: dict, variant_payload: dict) -> dict:
-    product_dict.update(variant_payload)
-
-    variants = variant_payload.get("variants") or []
-
-    if variants:
-        price_min = variant_payload.get("variant_price_min")
-        product_dict["price"] = (
-            float(price_min)
-            if price_min is not None
-            else product_dict.get("price", 0)
-        )
-        product_dict["stock_qty"] = int(
-            variant_payload.get("variant_stock_qty") or 0
-        )
-        product_dict["available_stock"] = int(
-            variant_payload.get("variant_available_stock") or 0
-        )
-
-    return product_dict
-
-
 def _to_product_dict(
     product: Product,
     category_name: str | None = None,
@@ -554,14 +267,6 @@ def _to_product_dict(
         "stock_qty": int(stock_qty or 0),
         "reserved_qty": int(reserved or 0),
         "available_stock": int(available_stock),
-        "has_variants": bool(getattr(product, "has_variants", False)),
-        "requires_variant_selection": bool(getattr(product, "has_variants", False)),
-        "options": [],
-        "variants": [],
-        "variant_count": 0,
-        "default_variant_id": None,
-        "variant_price_min": None,
-        "variant_price_max": None,
         "is_featured": bool(product.is_featured),
         "is_active": bool(product.is_active),
         "store_id": None,
@@ -767,7 +472,6 @@ def products(
                     p.base_price,
                     p.sale_price,
                     p.currency_code,
-                    p.has_variants,
                     p.is_featured,
                     p.is_active,
                     sp.store_id,
@@ -859,14 +563,6 @@ def products(
                     "stock_qty": int(r["stock_qty"] or 0),
                     "reserved_qty": int(r["reserved_qty"] or 0),
                     "available_stock": int(r["available_stock"] or 0),
-                    "has_variants": bool(r["has_variants"]),
-                    "requires_variant_selection": bool(r["has_variants"]),
-                    "options": [],
-                    "variants": [],
-                    "variant_count": 0,
-                    "default_variant_id": None,
-                    "variant_price_min": None,
-                    "variant_price_max": None,
                     "is_featured": bool(r["is_featured"]),
                     "is_active": bool(r["is_active"]),
                     "store_id": int(r["store_id"]),
@@ -939,60 +635,6 @@ def products(
     }
 
 
-
-@router.get("/products/{product_id}/variants")
-def product_variants(
-    product_id: int,
-    tenant_code: str = Query(...),
-    store_id: int | None = Query(default=None),
-    db: Session = Depends(get_db),
-):
-    tenant = _get_tenant_by_code(db, tenant_code)
-
-    product = (
-        db.query(Product)
-        .filter(
-            Product.id == product_id,
-            Product.tenant_id == tenant.id,
-            Product.is_active == True,
-        )
-        .first()
-    )
-
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-
-    if not bool(getattr(product, "has_variants", False)):
-        return {
-            "product_id": int(product.id),
-            "has_variants": False,
-            "requires_variant_selection": False,
-            "options": [],
-            "variants": [],
-            "variant_count": 0,
-            "default_variant_id": None,
-            "variant_price_min": None,
-            "variant_price_max": None,
-            "variant_stock_qty": 0,
-            "variant_available_stock": 0,
-        }
-
-    payload = _variant_payload_for_product(
-        db=db,
-        tenant_id=int(tenant.id),
-        product_id=int(product.id),
-        store_id=store_id,
-    )
-
-    return {
-        "product_id": int(product.id),
-        "has_variants": True,
-        "requires_variant_selection": True,
-        **payload,
-    }
-
-
-
 @router.get("/products/{product_id}")
 def product_by_id(
     product_id: int,
@@ -1060,7 +702,6 @@ def product_by_id(
                     p.base_price,
                     p.sale_price,
                     p.currency_code,
-                    p.has_variants,
                     p.is_featured,
                     p.is_active,
                     sp.store_id,
@@ -1123,7 +764,7 @@ def product_by_id(
         ships_from = r["ships_from_name"] or r["store_name"]
         seller_contact_email = r["seller_contact_email"] or r["store_email"]
 
-        result = {
+        return {
             "id": int(r["id"]),
             "product_id": int(r["id"]),
             "tenant_id": int(r["tenant_id"]),
@@ -1149,14 +790,6 @@ def product_by_id(
             "stock_qty": int(r["stock_qty"] or 0),
             "reserved_qty": int(r["reserved_qty"] or 0),
             "available_stock": int(r["available_stock"] or 0),
-            "has_variants": bool(r["has_variants"]),
-            "requires_variant_selection": bool(r["has_variants"]),
-            "options": [],
-            "variants": [],
-            "variant_count": 0,
-            "default_variant_id": None,
-            "variant_price_min": None,
-            "variant_price_max": None,
             "is_featured": bool(r["is_featured"]),
             "is_active": bool(r["is_active"]),
             "store_id": int(r["store_id"]),
@@ -1166,17 +799,6 @@ def product_by_id(
             "seller_contact_email": seller_contact_email,
             "delivery_options": delivery_options,
         }
-
-        if bool(r["has_variants"]):
-            variant_payload = _variant_payload_for_product(
-                db=db,
-                tenant_id=int(r["tenant_id"]),
-                product_id=int(r["id"]),
-                store_id=int(r["store_id"]),
-            )
-            _apply_variant_payload(result, variant_payload)
-
-        return result
 
     row = (
         db.query(Product, Category.category_name)
@@ -1193,15 +815,4 @@ def product_by_id(
         raise HTTPException(status_code=404, detail="Product not found")
 
     product, category_name = row
-    result = _to_product_dict(product, category_name)
-
-    if bool(getattr(product, "has_variants", False)):
-        variant_payload = _variant_payload_for_product(
-            db=db,
-            tenant_id=int(product.tenant_id),
-            product_id=int(product.id),
-            store_id=None,
-        )
-        _apply_variant_payload(result, variant_payload)
-
-    return result
+    return _to_product_dict(product, category_name)

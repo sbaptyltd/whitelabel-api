@@ -346,7 +346,6 @@ class Product(Base):
     currency_code = Column(String(10), nullable=False, default="AUD")
 
     stock_qty = Column(Integer, nullable=False, default=0)
-    has_variants = Column(Boolean, nullable=False, default=False)
 
     is_featured = Column(Boolean, nullable=False, default=False)
     is_active = Column(Boolean, nullable=False, default=True)
@@ -362,167 +361,6 @@ class Product(Base):
         nullable=False,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-    )
-
-
-class ProductOption(Base):
-    __tablename__ = "product_options"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
-    product_id = Column(BigInteger, ForeignKey("products.id"), nullable=False)
-
-    option_name = Column(String(100), nullable=False)
-    display_type = Column(
-        Enum("TEXT", "COLOR", "IMAGE", name="product_option_display_type"),
-        nullable=False,
-        default="TEXT",
-    )
-
-    sort_order = Column(Integer, nullable=False, default=0)
-    is_active = Column(Boolean, nullable=False, default=True)
-
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-
-    updated_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-        server_onupdate=text("CURRENT_TIMESTAMP"),
-    )
-
-
-class ProductOptionValue(Base):
-    __tablename__ = "product_option_values"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
-    option_id = Column(BigInteger, ForeignKey("product_options.id"), nullable=False)
-
-    option_value = Column(String(150), nullable=False)
-    swatch_hex = Column(String(20), nullable=True)
-    image_url = Column(Text, nullable=True)
-
-    sort_order = Column(Integer, nullable=False, default=0)
-    is_active = Column(Boolean, nullable=False, default=True)
-
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-
-    updated_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-        server_onupdate=text("CURRENT_TIMESTAMP"),
-    )
-
-
-class ProductVariant(Base):
-    __tablename__ = "product_variants"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
-    product_id = Column(BigInteger, ForeignKey("products.id"), nullable=False)
-
-    variant_title = Column(String(255), nullable=True)
-    sku = Column(String(100), nullable=True)
-    barcode = Column(String(100), nullable=True)
-
-    base_price = Column(Numeric(12, 2), nullable=False, default=0)
-    sale_price = Column(Numeric(12, 2), nullable=True)
-    currency_code = Column(String(10), nullable=False, default="AUD")
-
-    stock_qty = Column(Integer, nullable=False, default=0)
-
-    image_url = Column(Text, nullable=True)
-    gallery_json = Column(JSON, nullable=True)
-
-    weight_grams = Column(Integer, nullable=True)
-    delivery_surcharge = Column(Numeric(12, 2), nullable=False, default=0)
-
-    source_system = Column(String(50), nullable=True)
-    source_variant_id = Column(String(150), nullable=True)
-
-    sort_order = Column(Integer, nullable=False, default=0)
-    is_default = Column(Boolean, nullable=False, default=False)
-    is_active = Column(Boolean, nullable=False, default=True)
-
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-
-    updated_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-        server_onupdate=text("CURRENT_TIMESTAMP"),
-    )
-
-
-class ProductVariantValue(Base):
-    __tablename__ = "product_variant_values"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-
-    variant_id = Column(
-        BigInteger,
-        ForeignKey("product_variants.id"),
-        nullable=False,
-    )
-    option_id = Column(
-        BigInteger,
-        ForeignKey("product_options.id"),
-        nullable=False,
-    )
-    option_value_id = Column(
-        BigInteger,
-        ForeignKey("product_option_values.id"),
-        nullable=False,
-    )
-
-
-class StoreProductVariant(Base):
-    __tablename__ = "store_product_variants"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
-    store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=False)
-    product_variant_id = Column(
-        BigInteger,
-        ForeignKey("product_variants.id"),
-        nullable=False,
-    )
-
-    stock_qty = Column(Integer, nullable=False, default=0)
-    reserved_qty = Column(Integer, nullable=False, default=0)
-    local_price = Column(Numeric(12, 2), nullable=True)
-
-    is_active = Column(Boolean, nullable=False, default=True)
-
-    created_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    )
-
-    updated_at = Column(
-        TIMESTAMP,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-        server_onupdate=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -659,11 +497,6 @@ class CartItem(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
     product_id = Column(BigInteger, ForeignKey("products.id"), nullable=False)
-    product_variant_id = Column(
-        BigInteger,
-        ForeignKey("product_variants.id"),
-        nullable=True,
-    )
 
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=True)
     delivery_option_id = Column(
@@ -677,9 +510,6 @@ class CartItem(Base):
     delivery_eta_snapshot = Column(String(100), nullable=True)
 
     product_name_snapshot = Column(String(255), nullable=False)
-    variant_title_snapshot = Column(String(255), nullable=True)
-    variant_sku_snapshot = Column(String(100), nullable=True)
-    variant_options_snapshot = Column(JSON, nullable=True)
     product_image_snapshot = Column(Text, nullable=True)
 
     unit_price_snapshot = Column(Numeric(12, 2), nullable=False)
@@ -791,11 +621,6 @@ class OrderItem(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
     product_id = Column(BigInteger, ForeignKey("products.id"), nullable=True)
-    product_variant_id = Column(
-        BigInteger,
-        ForeignKey("product_variants.id"),
-        nullable=True,
-    )
 
     store_id = Column(BigInteger, ForeignKey("stores.id"), nullable=True)
     delivery_option_id = Column(
@@ -809,11 +634,8 @@ class OrderItem(Base):
     delivery_eta_snapshot = Column(String(100), nullable=True)
 
     product_name_snapshot = Column(String(255), nullable=False)
-    variant_title_snapshot = Column(String(255), nullable=True)
     product_image_snapshot = Column(Text, nullable=True)
     sku_snapshot = Column(String(100), nullable=True)
-    variant_sku_snapshot = Column(String(100), nullable=True)
-    variant_options_snapshot = Column(JSON, nullable=True)
 
     unit_price_snapshot = Column(Numeric(12, 2), nullable=False)
     quantity = Column(Integer, nullable=False)

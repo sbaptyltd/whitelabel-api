@@ -1,23 +1,32 @@
 from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
 class AddCartItemRequest(BaseModel):
     product_id: int
+    product_variant_id: Optional[int] = None
+    store_id: int
+    delivery_option_id: int
     quantity: int = Field(default=1, ge=1)
 
 
 class UpdateCartItemRequest(BaseModel):
     product_id: int
+    product_variant_id: Optional[int] = None
+    store_id: Optional[int] = None
+    delivery_option_id: Optional[int] = None
     quantity: int = Field(ge=0)
 
 
 class RemoveCartItemRequest(BaseModel):
     product_id: int
+    product_variant_id: Optional[int] = None
+    store_id: Optional[int] = None
+    delivery_option_id: Optional[int] = None
 
 
 class CreateOrderRequest(BaseModel):
-    store_id: int
     delivery_pincode: Optional[str] = None
     delivery_date: Optional[str] = None
     collection_date: Optional[str] = None
