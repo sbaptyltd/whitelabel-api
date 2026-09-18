@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func, text
+from sqlalchemy import bindparam, or_, func, text
 
 import os
 import json
@@ -222,6 +222,48 @@ def _delivery_options_for_product_store(
         )
 
     return options
+
+
+def _size_counts_for_products(
+    db: Session,
+    tenant_id: int,
+    product_ids: list[int],
+) -> dict[int, int]:
+    """Return active Size option-value counts for a page of products."""
+    unique_product_ids = sorted(set(product_ids))
+    if not unique_product_ids:
+        return {}
+
+    statement = text(
+        """
+        SELECT
+            po.product_id,
+            COUNT(DISTINCT pov.id) AS size_count
+        FROM product_options po
+        JOIN product_option_values pov
+          ON pov.option_id = po.id
+         AND pov.tenant_id = po.tenant_id
+         AND pov.is_active = 1
+        WHERE po.tenant_id = :tenant_id
+          AND po.product_id IN :product_ids
+          AND po.is_active = 1
+          AND LOWER(TRIM(po.option_name)) IN ('size', 'sizes')
+        GROUP BY po.product_id
+        """
+    ).bindparams(bindparam("product_ids", expanding=True))
+
+    rows = db.execute(
+        statement,
+        {
+            "tenant_id": tenant_id,
+            "product_ids": unique_product_ids,
+        },
+    ).mappings().all()
+
+    return {
+        int(row["product_id"]): int(row["size_count"] or 0)
+        for row in rows
+    }
 
 
 
@@ -801,6 +843,12 @@ def products(
             params,
         ).mappings().all()
 
+        size_counts = _size_counts_for_products(
+            db=db,
+            tenant_id=int(tenant.id),
+            product_ids=[int(r["id"]) for r in rows],
+        )
+
         items = []
         for r in rows:
             image_url = _image_url_from_gs_uri(r["image_url"])
@@ -864,6 +912,7 @@ def products(
                     "options": [],
                     "variants": [],
                     "variant_count": 0,
+                    "size_count": size_counts.get(int(r["id"]), 0),
                     "default_variant_id": None,
                     "variant_price_min": None,
                     "variant_price_max": None,
@@ -925,7 +974,17 @@ def products(
         .all()
     )
 
-    items = [_to_product_dict(product, category_name) for product, category_name in rows]
+    size_counts = _size_counts_for_products(
+        db=db,
+        tenant_id=int(tenant.id),
+        product_ids=[int(product.id) for product, _ in rows],
+    )
+
+    items = []
+    for product, category_name in rows:
+        item = _to_product_dict(product, category_name)
+        item["size_count"] = size_counts.get(int(product.id), 0)
+        items.append(item)
 
     return {
         "items": items,
