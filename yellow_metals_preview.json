@@ -1,0 +1,983 @@
+[
+  {
+    "source_product_id": "9992858206489",
+    "title": "Dhoodh Patila (Milk Vessel)",
+    "handle": "dhoodh-patila-milk-vessel-copy",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 3,
+    "variants": [
+      {
+        "source_variant_id": "51109377540377",
+        "title": "1.5 Litres",
+        "sku": "DP1.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3399.0,
+        "base_price_aud": 50.99,
+        "sale_price_aud": 58.64,
+        "options": {
+          "Size": "1.5 Litres"
+        }
+      },
+      {
+        "source_variant_id": "51109377573145",
+        "title": "2.5 Litres",
+        "sku": "DP2.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3899.0,
+        "base_price_aud": 58.49,
+        "sale_price_aud": 67.26,
+        "options": {
+          "Size": "2.5 Litres"
+        }
+      },
+      {
+        "source_variant_id": "51109377605913",
+        "title": "3.5 Liters",
+        "sku": "DP3.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 4499.0,
+        "base_price_aud": 67.49,
+        "sale_price_aud": 77.61,
+        "options": {
+          "Size": "3.5 Liters"
+        }
+      }
+    ],
+    "image_count": 8
+  },
+  {
+    "source_product_id": "9758999380249",
+    "title": "Sipri Brass",
+    "handle": "sipri-brass",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 3,
+    "variants": [
+      {
+        "source_variant_id": "51625986064665",
+        "title": "1.0 L",
+        "sku": null,
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3999.0,
+        "base_price_aud": 59.99,
+        "sale_price_aud": 68.99,
+        "options": {
+          "Size": "1.0 L"
+        }
+      },
+      {
+        "source_variant_id": "51097688899865",
+        "title": "2.0 L",
+        "sku": "SPB2.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 4899.0,
+        "base_price_aud": 73.49,
+        "sale_price_aud": 84.51,
+        "options": {
+          "Size": "2.0 L"
+        }
+      },
+      {
+        "source_variant_id": "51097688932633",
+        "title": "3.5 L",
+        "sku": "SPB3.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 5999.0,
+        "base_price_aud": 89.99,
+        "sale_price_aud": 103.49,
+        "options": {
+          "Size": "3.5 L"
+        }
+      }
+    ],
+    "image_count": 6
+  },
+  {
+    "source_product_id": "9978302595353",
+    "title": "Copper Frying Pan",
+    "handle": "brass-frying-pan",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "51040168739097",
+        "title": "Default Title",
+        "sku": "CFP1.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3899.0,
+        "base_price_aud": 58.49,
+        "sale_price_aud": 67.26,
+        "options": {}
+      }
+    ],
+    "image_count": 5
+  },
+  {
+    "source_product_id": "9955513729305",
+    "title": "Royal Brass Lagan (Induction Compatible)",
+    "handle": "flat-lagan",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 2,
+    "variants": [
+      {
+        "source_variant_id": "51235486007577",
+        "title": "3.0 Liters",
+        "sku": "RBL3.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 6499.0,
+        "base_price_aud": 97.49,
+        "sale_price_aud": 112.11,
+        "options": {
+          "Size": "3.0 Liters"
+        }
+      },
+      {
+        "source_variant_id": "50932763427097",
+        "title": "6.0 Liters",
+        "sku": "RBL6.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 9499.0,
+        "base_price_aud": 142.49,
+        "sale_price_aud": 163.86,
+        "options": {
+          "Size": "6.0 Liters"
+        }
+      }
+    ],
+    "image_count": 9
+  },
+  {
+    "source_product_id": "9865689399577",
+    "title": "Royal Copper Frypan",
+    "handle": "copper-frying-pan",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "50458327253273",
+        "title": "Default Title",
+        "sku": "RCFP1.0",
+        "available": false,
+        "stock_qty": 0,
+        "inr_price": 3799.0,
+        "base_price_aud": 56.99,
+        "sale_price_aud": 65.54,
+        "options": {}
+      }
+    ],
+    "image_count": 10
+  },
+  {
+    "source_product_id": "9758998495513",
+    "title": "Copper Madurai Handi",
+    "handle": "copper-madurai-handi",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 3,
+    "variants": [
+      {
+        "source_variant_id": "50154674880793",
+        "title": "2.5 Litres",
+        "sku": "CMH3.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 6499.0,
+        "base_price_aud": 97.49,
+        "sale_price_aud": 112.11,
+        "options": {
+          "Size": "2.5 Litres"
+        }
+      },
+      {
+        "source_variant_id": "50599845822745",
+        "title": "5.0 Liters",
+        "sku": "CMH6",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 7999.0,
+        "base_price_aud": 119.99,
+        "sale_price_aud": 137.99,
+        "options": {
+          "Size": "5.0 Liters"
+        }
+      },
+      {
+        "source_variant_id": "50154674913561",
+        "title": "8.0 Liters",
+        "sku": "CMH9",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 9799.0,
+        "base_price_aud": 146.99,
+        "sale_price_aud": 169.04,
+        "options": {
+          "Size": "8.0 Liters"
+        }
+      }
+    ],
+    "image_count": 8
+  },
+  {
+    "source_product_id": "9758994039065",
+    "title": "Brass Frying Pan (Frying Batti)",
+    "handle": "brass-frying-pan-frying-batti",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "49923351216409",
+        "title": "Default Title",
+        "sku": "BFP1.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3349.0,
+        "base_price_aud": 50.24,
+        "sale_price_aud": 57.78,
+        "options": {}
+      }
+    ],
+    "image_count": 5
+  },
+  {
+    "source_product_id": "9758996857113",
+    "title": "Brass Plate Set",
+    "handle": "brass-plate-set",
+    "category": "Tableware & Serveware",
+    "category_id": 212,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "49923359506713",
+        "title": "Default Title",
+        "sku": "BPS",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 4299.0,
+        "base_price_aud": 64.49,
+        "sale_price_aud": 74.16,
+        "options": {}
+      }
+    ],
+    "image_count": 5
+  },
+  {
+    "source_product_id": "9758999707929",
+    "title": "Sipri Copper",
+    "handle": "sipri-copper",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 2,
+    "variants": [
+      {
+        "source_variant_id": "51097676742937",
+        "title": "2.0 L",
+        "sku": "SCP2.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 4950.0,
+        "base_price_aud": 74.25,
+        "sale_price_aud": 85.39,
+        "options": {
+          "Size": "2.0 L"
+        }
+      },
+      {
+        "source_variant_id": "51097660031257",
+        "title": "3.5 L",
+        "sku": "SPC3.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 6299.0,
+        "base_price_aud": 94.49,
+        "sale_price_aud": 108.66,
+        "options": {
+          "Size": "3.5 L"
+        }
+      }
+    ],
+    "image_count": 8
+  },
+  {
+    "source_product_id": "9758997938457",
+    "title": "Copper Lagan",
+    "handle": "copper-lagan",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 4,
+    "variants": [
+      {
+        "source_variant_id": "49923362291993",
+        "title": "3.0 Liters",
+        "sku": "CL3.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 6699.0,
+        "base_price_aud": 100.49,
+        "sale_price_aud": 115.56,
+        "options": {
+          "Size": "3.0 Liters"
+        }
+      },
+      {
+        "source_variant_id": "50037525578009",
+        "title": "4.5 Liters",
+        "sku": "CL4.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 8999.0,
+        "base_price_aud": 134.99,
+        "sale_price_aud": 155.24,
+        "options": {
+          "Size": "4.5 Liters"
+        }
+      },
+      {
+        "source_variant_id": "49923362324761",
+        "title": "6.0 Liters",
+        "sku": "CL6.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 10899.0,
+        "base_price_aud": 163.49,
+        "sale_price_aud": 188.01,
+        "options": {
+          "Size": "6.0 Liters"
+        }
+      },
+      {
+        "source_variant_id": "50154663018777",
+        "title": "9.0 Liters",
+        "sku": "CL9.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 12999.0,
+        "base_price_aud": 194.99,
+        "sale_price_aud": 224.24,
+        "options": {
+          "Size": "9.0 Liters"
+        }
+      }
+    ],
+    "image_count": 19
+  },
+  {
+    "source_product_id": "9758995972377",
+    "title": "Brass Masala Dani (Spices Box)",
+    "handle": "masala-dani",
+    "category": "Kitchen Storage",
+    "category_id": 214,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "49923357540633",
+        "title": "Default Title",
+        "sku": "BMD",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3899.0,
+        "base_price_aud": 58.49,
+        "sale_price_aud": 67.26,
+        "options": {}
+      }
+    ],
+    "image_count": 7
+  },
+  {
+    "source_product_id": "9758995120409",
+    "title": "Brass Lagan",
+    "handle": "brass-lagan",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 4,
+    "variants": [
+      {
+        "source_variant_id": "49923354231065",
+        "title": "3.0 Liters",
+        "sku": "BL3",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 6499.0,
+        "base_price_aud": 97.49,
+        "sale_price_aud": 112.11,
+        "options": {
+          "Size": "3.0 Liters"
+        }
+      },
+      {
+        "source_variant_id": "50169961808153",
+        "title": "4.5 Liters",
+        "sku": "BL4.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 8499.0,
+        "base_price_aud": 127.49,
+        "sale_price_aud": 146.61,
+        "options": {
+          "Size": "4.5 Liters"
+        }
+      },
+      {
+        "source_variant_id": "49923354263833",
+        "title": "6.0 Liters",
+        "sku": "BL6",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 9699.0,
+        "base_price_aud": 145.49,
+        "sale_price_aud": 167.31,
+        "options": {
+          "Size": "6.0 Liters"
+        }
+      },
+      {
+        "source_variant_id": "50402588950809",
+        "title": "9.0 Liters",
+        "sku": "BL9",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 10999.0,
+        "base_price_aud": 164.99,
+        "sale_price_aud": 189.74,
+        "options": {
+          "Size": "9.0 Liters"
+        }
+      }
+    ],
+    "image_count": 20
+  },
+  {
+    "source_product_id": "9759000297753",
+    "title": "Copper Water Tumbler (750 ml)",
+    "handle": "sipri-brasswater-tumbler-copper-4no-copy",
+    "category": "Drinkware",
+    "category_id": 213,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "49923367305497",
+        "title": "Default Title",
+        "sku": "CWT750",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2799.0,
+        "base_price_aud": 41.99,
+        "sale_price_aud": 48.29,
+        "options": {}
+      }
+    ],
+    "image_count": 5
+  },
+  {
+    "source_product_id": "9758994661657",
+    "title": "Brass Kadhai",
+    "handle": "brass-kadai",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 6,
+    "variants": [
+      {
+        "source_variant_id": "51582476976409",
+        "title": "1.0 Liters",
+        "sku": null,
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2899.0,
+        "base_price_aud": 43.49,
+        "sale_price_aud": 50.01,
+        "options": {
+          "Size": "1.0 Liters"
+        }
+      },
+      {
+        "source_variant_id": "49923352658201",
+        "title": "2.5 Liters",
+        "sku": "BK2.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3399.0,
+        "base_price_aud": 50.99,
+        "sale_price_aud": 58.64,
+        "options": {
+          "Size": "2.5 Liters"
+        }
+      },
+      {
+        "source_variant_id": "49923352690969",
+        "title": "6.0 Liters",
+        "sku": "BK6",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 6499.0,
+        "base_price_aud": 97.49,
+        "sale_price_aud": 112.11,
+        "options": {
+          "Size": "6.0 Liters"
+        }
+      },
+      {
+        "source_variant_id": "51582601756953",
+        "title": "1.0 Liters with Lid",
+        "sku": null,
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3399.0,
+        "base_price_aud": 50.99,
+        "sale_price_aud": 58.64,
+        "options": {
+          "Size": "1.0 Liters with Lid"
+        }
+      },
+      {
+        "source_variant_id": "51410689589529",
+        "title": "2.5 Liters with Lid",
+        "sku": null,
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 4199.0,
+        "base_price_aud": 62.99,
+        "sale_price_aud": 72.44,
+        "options": {
+          "Size": "2.5 Liters with Lid"
+        }
+      },
+      {
+        "source_variant_id": "51410689622297",
+        "title": "6.0 Liters with Lid",
+        "sku": null,
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 7199.0,
+        "base_price_aud": 107.99,
+        "sale_price_aud": 124.19,
+        "options": {
+          "Size": "6.0 Liters with Lid"
+        }
+      }
+    ],
+    "image_count": 10
+  },
+  {
+    "source_product_id": "9758997479705",
+    "title": "Brass Tea Pan",
+    "handle": "brass-sauce-pan",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 3,
+    "variants": [
+      {
+        "source_variant_id": "49923360981273",
+        "title": "1000 ml",
+        "sku": "BSP1000",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2499.0,
+        "base_price_aud": 37.49,
+        "sale_price_aud": 43.11,
+        "options": {
+          "Size": "1000 ml"
+        }
+      },
+      {
+        "source_variant_id": "49923361014041",
+        "title": "1250 ml",
+        "sku": "BSP1250",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2799.0,
+        "base_price_aud": 41.99,
+        "sale_price_aud": 48.29,
+        "options": {
+          "Size": "1250 ml"
+        }
+      },
+      {
+        "source_variant_id": "49923361046809",
+        "title": "1500 ml",
+        "sku": "BSP1500",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2999.0,
+        "base_price_aud": 44.99,
+        "sale_price_aud": 51.74,
+        "options": {
+          "Size": "1500 ml"
+        }
+      }
+    ],
+    "image_count": 9
+  },
+  {
+    "source_product_id": "9758997152025",
+    "title": "Brass Roti Tawa",
+    "handle": "brass-roti-tawa",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 2,
+    "variants": [
+      {
+        "source_variant_id": "49923359801625",
+        "title": "Medium Tawa(1.0 Kg)",
+        "sku": "BRT1.O",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2799.0,
+        "base_price_aud": 41.99,
+        "sale_price_aud": 48.29,
+        "options": {
+          "Size": "Medium Tawa(1.0 Kg)"
+        }
+      },
+      {
+        "source_variant_id": "49923359834393",
+        "title": "Heavy Duty Tawa(1.4 Kg)",
+        "sku": "BRTHY1.4",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3499.0,
+        "base_price_aud": 52.49,
+        "sale_price_aud": 60.36,
+        "options": {
+          "Size": "Heavy Duty Tawa(1.4 Kg)"
+        }
+      }
+    ],
+    "image_count": 8
+  },
+  {
+    "source_product_id": "9758996365593",
+    "title": "Brass Paraat",
+    "handle": "paraat-polished-brass",
+    "category": "Preparation Tools",
+    "category_id": 215,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "49923358130457",
+        "title": "Default Title",
+        "sku": "BP13.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2899.0,
+        "base_price_aud": 43.49,
+        "sale_price_aud": 50.01,
+        "options": {}
+      }
+    ],
+    "image_count": 6
+  },
+  {
+    "source_product_id": "9758994399513",
+    "title": "Brass Jalebi Kadai (Flat Kadai)",
+    "handle": "brass-jalebi-kadai",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "49923352428825",
+        "title": "Default Title",
+        "sku": "BJK2",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 4499.0,
+        "base_price_aud": 67.49,
+        "sale_price_aud": 77.61,
+        "options": {}
+      }
+    ],
+    "image_count": 7
+  },
+  {
+    "source_product_id": "9758998888729",
+    "title": "Copper Water Matka",
+    "handle": "copper-water-matika",
+    "category": "Drinkware",
+    "category_id": 213,
+    "has_variants": true,
+    "variant_count": 2,
+    "variants": [
+      {
+        "source_variant_id": "51991286481177",
+        "title": "4.0 L",
+        "sku": "CWM4.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 4950.0,
+        "base_price_aud": 74.25,
+        "sale_price_aud": 85.39,
+        "options": {
+          "Size": "4.0 L"
+        }
+      },
+      {
+        "source_variant_id": "51991286513945",
+        "title": "8.0 L",
+        "sku": "CWM8.0",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 6999.0,
+        "base_price_aud": 104.99,
+        "sale_price_aud": 120.74,
+        "options": {
+          "Size": "8.0 L"
+        }
+      }
+    ],
+    "image_count": 8
+  },
+  {
+    "source_product_id": "9758996594969",
+    "title": "Biryani Handi",
+    "handle": "biryani-handi-dal-handi",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 3,
+    "variants": [
+      {
+        "source_variant_id": "51835029029145",
+        "title": "2.5 L",
+        "sku": "BPDH-1",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 5999.0,
+        "base_price_aud": 89.99,
+        "sale_price_aud": 103.49,
+        "options": {
+          "Size": "2.5 L"
+        }
+      },
+      {
+        "source_variant_id": "52948526629145",
+        "title": "4 L",
+        "sku": "BPDH-3",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 7299.0,
+        "base_price_aud": 109.49,
+        "sale_price_aud": 125.91,
+        "options": {
+          "Size": "4 L"
+        }
+      },
+      {
+        "source_variant_id": "51835029061913",
+        "title": "6 L",
+        "sku": "BPDH-2",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 8299.0,
+        "base_price_aud": 124.49,
+        "sale_price_aud": 143.16,
+        "options": {
+          "Size": "6 L"
+        }
+      }
+    ],
+    "image_count": 5
+  },
+  {
+    "source_product_id": "9759000002841",
+    "title": "Tea/Sugar BOX (Set of 2 Brass Containers)",
+    "handle": "tea-sugar-box-brass-dabba",
+    "category": "Kitchen Storage",
+    "category_id": 214,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "50896787702041",
+        "title": "Default Title",
+        "sku": "TBSET2",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3799.0,
+        "base_price_aud": 56.99,
+        "sale_price_aud": 65.54,
+        "options": {}
+      }
+    ],
+    "image_count": 5
+  },
+  {
+    "source_product_id": "9758997709081",
+    "title": "COPPER JUG WITH GLASS-CUM- LID",
+    "handle": "copper-jug-with-glass-cum-lid",
+    "category": "Drinkware",
+    "category_id": 213,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "49923361210649",
+        "title": "Default Title",
+        "sku": "CJUG",
+        "available": false,
+        "stock_qty": 0,
+        "inr_price": 4999.0,
+        "base_price_aud": 74.99,
+        "sale_price_aud": 86.24,
+        "options": {}
+      }
+    ],
+    "image_count": 2
+  },
+  {
+    "source_product_id": "9758995710233",
+    "title": "Brass Lids",
+    "handle": "brass-lids",
+    "category": "Cookware",
+    "category_id": 211,
+    "has_variants": true,
+    "variant_count": 7,
+    "variants": [
+      {
+        "source_variant_id": "51769666699545",
+        "title": "9.0 Inches",
+        "sku": "BKL11.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 1599.0,
+        "base_price_aud": 23.99,
+        "sale_price_aud": 27.59,
+        "options": {
+          "12.0": "9.0 Inches"
+        }
+      },
+      {
+        "source_variant_id": "51769666797849",
+        "title": "9.5 Inches",
+        "sku": "BKL11.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 1699.0,
+        "base_price_aud": 25.49,
+        "sale_price_aud": 29.31,
+        "options": {
+          "12.0": "9.5 Inches"
+        }
+      },
+      {
+        "source_variant_id": "51769667813657",
+        "title": "11.0 Inches",
+        "sku": "BKL11.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 1899.0,
+        "base_price_aud": 28.49,
+        "sale_price_aud": 32.76,
+        "options": {
+          "12.0": "11.0 Inches"
+        }
+      },
+      {
+        "source_variant_id": "49923356426521",
+        "title": "11.50 Inches",
+        "sku": "BKL11.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 1999.0,
+        "base_price_aud": 29.99,
+        "sale_price_aud": 34.49,
+        "options": {
+          "12.0": "11.50 Inches"
+        }
+      },
+      {
+        "source_variant_id": "51769672401177",
+        "title": "12.0 Inches",
+        "sku": "BKL11.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2199.0,
+        "base_price_aud": 32.99,
+        "sale_price_aud": 37.94,
+        "options": {
+          "12.0": "12.0 Inches"
+        }
+      },
+      {
+        "source_variant_id": "49923356459289",
+        "title": "13.5 Inches",
+        "sku": "BKL13.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2399.0,
+        "base_price_aud": 35.99,
+        "sale_price_aud": 41.39,
+        "options": {
+          "12.0": "13.5 Inches"
+        }
+      },
+      {
+        "source_variant_id": "50859659264281",
+        "title": "14.5 Inches",
+        "sku": "BKL14.5",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 2499.0,
+        "base_price_aud": 37.49,
+        "sale_price_aud": 43.11,
+        "options": {
+          "12.0": "14.5 Inches"
+        }
+      }
+    ],
+    "image_count": 2
+  },
+  {
+    "source_product_id": "9758999019801",
+    "title": "Brass Roti Box / Mithai Box",
+    "handle": "roti-box-mithai-box",
+    "category": "Kitchen Storage",
+    "category_id": 214,
+    "has_variants": false,
+    "variant_count": 1,
+    "variants": [
+      {
+        "source_variant_id": "49923364061465",
+        "title": "Default Title",
+        "sku": "RBOX",
+        "available": true,
+        "stock_qty": 100,
+        "inr_price": 3249.0,
+        "base_price_aud": 48.74,
+        "sale_price_aud": 56.05,
+        "options": {}
+      }
+    ],
+    "image_count": 7
+  }
+]
