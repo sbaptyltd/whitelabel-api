@@ -1,11 +1,15 @@
 import os
+import hashlib
+import logging
+from uuid import UUID
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 
 import stripe
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -18,11 +22,14 @@ from app.models.commerce import (
     NotificationLog,
     Order,
     OrderItem,
+    OrderStatusHistory,
+    OrderEvidence,
     Payment,
     User,
     UserAddress,
 )
 from app.schemas.cart import CreateOrderRequest, ConfirmPaymentRequest
+from app.services.order_evidence_storage import MAX_FILE_BYTES, upload_order_evidence
 
 try:
     from app.services.push_notifications import send_push_notification
@@ -555,6 +562,9 @@ def _require_store_user(current_user):
             status_code=403,
             detail=f"Not allowed for store operations. user_id={user_id}, mobile={mobile}, role={role}, store_id={store_id}",
         )
+
+    if role not in {"admin", "super_user"} and store_id is None:
+        raise HTTPException(status_code=403, detail="No store assigned to this account")
 
     return True
 
@@ -2053,99 +2063,302 @@ def store_order_detail(
     }
 
 
-@router.post("/store/orders/{order_id}/accept")
-def accept_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return _change_order_status(db, current_user, order_id, "ACCEPTED", ["PENDING", "CONFIRMED"])
+STORE_ACTION_RULES = {
+    "accept": ("ACCEPTED", {"PENDING", "CONFIRMED"}),
+    "reject": ("REJECTED", {"PENDING", "CONFIRMED"}),
+    "cancel": ("CANCELLED", {"PENDING", "CONFIRMED", "ACCEPTED", "PREPARING"}),
+    "preparing": ("PREPARING", {"ACCEPTED"}),
+    "ready": ("READY", {"ACCEPTED", "PREPARING"}),
+    "dispatch": ("DISPATCHED", {"READY"}),
+    "deliver": ("DELIVERED", {"READY", "DISPATCHED", "OUT_FOR_DELIVERY"}),
+}
 
 
-@router.post("/store/orders/{order_id}/reject")
-def reject_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return _change_order_status(db, current_user, order_id, "REJECTED", ["PENDING", "CONFIRMED"])
-
-
-@router.post("/store/orders/{order_id}/cancel")
-def cancel_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return _change_order_status(db, current_user, order_id, "CANCELLED", ["PENDING", "CONFIRMED", "ACCEPTED", "PREPARING"])
-
-
-@router.post("/store/orders/{order_id}/preparing")
-def mark_store_order_preparing(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return _change_order_status(db, current_user, order_id, "PREPARING", ["ACCEPTED"])
-
-
-@router.post("/store/orders/{order_id}/ready")
-def mark_store_order_ready(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    order = _get_store_order_or_404(db, current_user, order_id)
-
-    if order.order_status not in ["ACCEPTED", "PREPARING"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Order cannot move from {order.order_status} to READY",
-        )
-
-    order.order_status = "READY"
-
-    # Send push notification to delivery role users when store marks order as READY.
-    _notify_delivery_users_order_ready(db, order)
-
-    db.commit()
-    db.refresh(order)
-
+def _store_action_response(order, history):
     return {
-        "message": "Order status updated to READY",
+        "message": f"Order action recorded as {history.new_status}",
         "order_id": int(order.id),
         "order_number": order.order_number,
         "order_status": order.order_status,
         "status": order.order_status,
         "payment_status": order.payment_status,
+        "history_id": int(history.id),
+        "recorded_action_status": history.new_status,
         "store_id": int(order.store_id) if order.store_id else None,
-        "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
+        "delivery_partner_id": (
+            int(order.delivery_partner_id) if order.delivery_partner_id else None
+        ),
     }
 
 
-# Kept for old Flutter/store flow, but delivery flow should use OUT_FOR_DELIVERY.
-@router.post("/store/orders/{order_id}/dispatch")
-def dispatch_store_order(order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return _change_order_status(db, current_user, order_id, "DISPATCHED", ["READY"])
+def _read_store_action_photos(action, front_photo, back_photo, side_photo, extra_photos):
+    photos = [
+        ("FRONT_PHOTO", 1, front_photo),
+        ("BACK_PHOTO", 1, back_photo),
+        ("SIDE_PHOTO", 1, side_photo),
+    ]
+    extras = extra_photos or []
+    if action != "ready":
+        if any(photo is not None for _, _, photo in photos) or extras:
+            raise HTTPException(400, "Pickup photos belong to the ready action")
+        return []
+    if any(photo is None for _, _, photo in photos):
+        raise HTTPException(400, "Front, back and side photos are required")
+    if len(extras) > 5:
+        raise HTTPException(400, "Upload at most five extra photos")
+    photos.extend(("EXTRA_PHOTO", i, photo) for i, photo in enumerate(extras, 1))
+    result = []
+    required_hashes = set()
+    for evidence_type, slot, photo in photos:
+        content = photo.file.read(MAX_FILE_BYTES + 1)
+        if not content:
+            raise HTTPException(400, f"{evidence_type} is empty")
+        if len(content) > MAX_FILE_BYTES:
+            raise HTTPException(413, "Each photo must be 8 MB or smaller")
+        digest = hashlib.sha256(content).hexdigest()
+        if evidence_type != "EXTRA_PHOTO":
+            required_hashes.add(digest)
+        result.append((evidence_type, slot, photo, content, digest))
+    if len(required_hashes) != 3:
+        raise HTTPException(400, "Front, back and side must be different photos")
+    return result
 
 
-# Kept for old Flutter/store flow, but delivery flow should mark delivered.
-@router.post("/store/orders/{order_id}/deliver")
-def deliver_store_order(
+def _save_store_action(
+    *, action, order_id, notes, request_id, front_photo, back_photo,
+    side_photo, extra_photos, db, current_user,
+):
+    _require_store_user(current_user)
+    clean_notes = notes.strip()
+    if not clean_notes or len(clean_notes) > 5000:
+        raise HTTPException(400, "Notes are required (maximum 5,000 characters)")
+    try:
+        clean_request_id = str(UUID(request_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, "request_id must be a valid UUID")
+    target_status, allowed_from = STORE_ACTION_RULES[action]
+
+    try:
+        # Lock first: concurrent submissions cannot change the same order together.
+        order = _store_order_query(db, current_user, order_id).with_for_update().first()
+        if not order:
+            raise HTTPException(404, "Order not found for this store")
+        existing = db.query(OrderStatusHistory).filter(
+            OrderStatusHistory.tenant_id == current_user.tenant_id,
+            OrderStatusHistory.order_id == order.id,
+            OrderStatusHistory.request_id == clean_request_id,
+        ).first()
+        if existing and (
+            existing.action_code != action
+            or existing.actor_user_id != current_user.id
+            or existing.notes != clean_notes
+        ):
+            raise HTTPException(409, "request_id was used for another submission")
+        if not existing and order.order_status not in allowed_from:
+            raise HTTPException(
+                409, f"Order cannot move from {order.order_status} to {target_status}"
+            )
+
+        photos = _read_store_action_photos(
+            action, front_photo, back_photo, side_photo, extra_photos
+        )
+        if existing:
+            saved = db.query(OrderEvidence).filter(
+                OrderEvidence.tenant_id == current_user.tenant_id,
+                OrderEvidence.history_id == existing.id,
+            ).all()
+            saved_hashes = {
+                (e.evidence_type, e.slot_number): e.sha256_hash for e in saved
+            }
+            submitted_hashes = {(kind, slot): digest for kind, slot, _, _, digest in photos}
+            if saved_hashes != submitted_hashes:
+                raise HTTPException(409, "Retry photos differ from the saved submission")
+            response = _store_action_response(order, existing)
+            db.rollback()  # Release the lock without writing or notifying again.
+            return response
+
+        evidence_records = []
+        for kind, slot, photo, content, _ in photos:
+            record = upload_order_evidence(
+                content=content,
+                tenant_id=current_user.tenant_id,
+                order_id=order.id,
+                actor_user_id=current_user.id,
+                evidence_type=kind,
+                original_filename=photo.filename,
+            )
+            evidence_records.append((slot, record))
+
+        history = OrderStatusHistory(
+            tenant_id=current_user.tenant_id,
+            order_id=order.id,
+            request_id=clean_request_id,
+            previous_status=order.order_status,
+            new_status=target_status,
+            action_code=action,
+            actor_type="ADMIN" if current_user.role in {"admin", "super_user"} else "STORE",
+            actor_user_id=current_user.id,
+            actor_name_snapshot=current_user.full_name,
+            actor_role_snapshot=current_user.role,
+            notes=clean_notes,
+            recorded_at=datetime.utcnow(),
+        )
+        db.add(history)
+        db.flush()
+        for slot, record in evidence_records:
+            db.add(OrderEvidence(
+                tenant_id=current_user.tenant_id,
+                history_id=history.id,
+                slot_number=slot,
+                **record,
+            ))
+        order.order_status = target_status
+        db.flush()
+        response = _store_action_response(order, history)
+        db.commit()
+    except Exception:
+        # Uploaded objects may remain unlinked after a failed transaction.
+        # Never delete recorded evidence as part of retry handling.
+        db.rollback()
+        raise
+
+    try:
+        # Preserve existing notification behavior, after durable order save.
+        if target_status == "READY":
+            _notify_delivery_users_order_ready(db, order)
+        elif target_status == "DELIVERED":
+            _notify_customer_order_delivered(db, order)
+            _notify_store_users_order_delivered(db, order)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logging.getLogger(__name__).exception(
+            "Notification failed after saved store action: order=%s", order_id
+        )
+    return response
+
+
+def _make_store_action_endpoint(action):
+    def endpoint(
+        order_id: int,
+        notes: str = Form(...),
+        request_id: str = Form(...),
+        front_photo: UploadFile | None = File(None),
+        back_photo: UploadFile | None = File(None),
+        side_photo: UploadFile | None = File(None),
+        extra_photos: list[UploadFile] | None = File(None),
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+    ):
+        return _save_store_action(
+            action=action, order_id=order_id, notes=notes, request_id=request_id,
+            front_photo=front_photo, back_photo=back_photo, side_photo=side_photo,
+            extra_photos=extra_photos, db=db, current_user=current_user,
+        )
+    endpoint.__name__ = f"store_order_{action}_with_evidence"
+    return endpoint
+
+
+for _action in STORE_ACTION_RULES:
+    router.add_api_route(
+        f"/store/orders/{{order_id}}/{_action}",
+        _make_store_action_endpoint(_action),
+        methods=["POST"],
+        name=f"store_order_{_action}_with_evidence",
+    )
+
+
+@router.get("/store/orders/{order_id}/history")
+def store_order_history(
     order_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     order = _get_store_order_or_404(db, current_user, order_id)
+    histories = db.query(OrderStatusHistory).filter(
+        OrderStatusHistory.tenant_id == current_user.tenant_id,
+        OrderStatusHistory.order_id == order.id,
+    ).order_by(OrderStatusHistory.id.asc()).all()
+    if not histories:
+        return []
+    evidence = db.query(OrderEvidence).filter(
+        OrderEvidence.tenant_id == current_user.tenant_id,
+        OrderEvidence.history_id.in_([h.id for h in histories]),
+    ).order_by(OrderEvidence.id.asc()).all()
+    grouped = {}
+    for item in evidence:
+        grouped.setdefault(item.history_id, []).append({
+            "evidence_id": int(item.id),
+            "evidence_type": item.evidence_type,
+            "slot_number": item.slot_number,
+            "content_type": item.content_type,
+            "file_size_bytes": int(item.file_size_bytes),
+            "sha256_hash": item.sha256_hash,
+            "caption": item.caption,
+            "uploaded_at": item.uploaded_at.isoformat() + "Z",
+            "view_endpoint": f"/api/store/orders/{order_id}/evidence/{item.id}",
+        })
+    return [{
+        "history_id": int(h.id),
+        "previous_status": h.previous_status,
+        "new_status": h.new_status,
+        "action_code": h.action_code,
+        "actor_type": h.actor_type,
+        "actor_user_id": int(h.actor_user_id),
+        "actor_name": h.actor_name_snapshot,
+        "actor_role": h.actor_role_snapshot,
+        "notes": h.notes,
+        "recipient_name": h.recipient_name,
+        "receipt_confirmation_text": h.receipt_confirmation_text,
+        "recorded_at": h.recorded_at.isoformat() + "Z",
+        "evidence": grouped.get(h.id, []),
+    } for h in histories]
 
-    if order.order_status not in ["DISPATCHED", "READY", "OUT_FOR_DELIVERY"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Order cannot move from {order.order_status} to DELIVERED",
+
+@router.get("/store/orders/{order_id}/evidence/{evidence_id}")
+def view_store_order_evidence(
+    order_id: int,
+    evidence_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    _get_store_order_or_404(db, current_user, order_id)
+    evidence = db.query(OrderEvidence).join(
+        OrderStatusHistory, OrderEvidence.history_id == OrderStatusHistory.id
+    ).filter(
+        OrderEvidence.id == evidence_id,
+        OrderEvidence.tenant_id == current_user.tenant_id,
+        OrderStatusHistory.tenant_id == current_user.tenant_id,
+        OrderStatusHistory.order_id == order_id,
+    ).first()
+    if not evidence:
+        raise HTTPException(404, "Evidence not found for this order")
+    configured_bucket = os.getenv("ORDER_EVIDENCE_BUCKET", "").strip()
+    if not configured_bucket or evidence.storage_bucket != configured_bucket:
+        raise HTTPException(503, "Evidence storage configuration mismatch")
+    if evidence.file_size_bytes > MAX_FILE_BYTES:
+        raise HTTPException(503, "Evidence exceeds supported size")
+    try:
+        from google.cloud import storage
+        blob = storage.Client().bucket(configured_bucket).blob(
+            evidence.storage_object, generation=int(evidence.storage_generation)
         )
-
-    order.order_status = "DELIVERED"
-
-    _notify_customer_order_delivered(db, order)
-    _notify_store_users_order_delivered(db, order)
-
-    db.commit()
-    db.refresh(order)
-
-    return {
-        "message": "Order delivered",
-        "order_id": int(order.id),
-        "order_number": order.order_number,
-        "order_status": order.order_status,
-        "status": order.order_status,
-        "payment_status": order.payment_status,
-        "store_id": int(order.store_id) if order.store_id else None,
-        "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
-    }
+        content = blob.download_as_bytes(timeout=60)
+        if (
+            len(content) != evidence.file_size_bytes
+            or hashlib.sha256(content).hexdigest() != evidence.sha256_hash
+        ):
+            raise RuntimeError("Evidence integrity check failed")
+    except Exception as exc:
+        logging.getLogger(__name__).exception(
+            "Evidence retrieval failed: order=%s evidence=%s", order_id, evidence_id
+        )
+        raise HTTPException(503, "Evidence could not be retrieved") from exc
+    return Response(
+        content=content,
+        media_type=evidence.content_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/delivery/orders")

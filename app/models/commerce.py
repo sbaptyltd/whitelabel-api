@@ -1,4 +1,6 @@
 from datetime import datetime
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, UniqueConstraint
+from sqlalchemy.dialects.mysql import BIGINT, CHAR, DATETIME, SMALLINT
 
 from sqlalchemy import (
     BigInteger,
@@ -984,4 +986,144 @@ class UserDeviceToken(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
         server_onupdate=text("CURRENT_TIMESTAMP"),
-    )    
+    )  
+
+class OrderStatusHistory(Base):
+    __tablename__ = "order_status_history"
+
+    id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    tenant_id = Column(BIGINT(unsigned=True), nullable=False)
+    order_id = Column(BIGINT(unsigned=True), nullable=False)
+
+    request_id = Column(CHAR(36), nullable=False)
+    previous_status = Column(String(30), nullable=False)
+    new_status = Column(String(30), nullable=False)
+    action_code = Column(String(50), nullable=False)
+
+    actor_type = Column(
+        Enum("STORE", "DELIVERY", "ADMIN"),
+        nullable=False,
+    )
+    actor_user_id = Column(BIGINT(unsigned=True), nullable=False)
+    actor_name_snapshot = Column(String(255), nullable=True)
+    actor_role_snapshot = Column(String(50), nullable=False)
+
+    notes = Column(Text, nullable=False)
+    recipient_name = Column(String(255), nullable=True)
+    receipt_confirmation_text = Column(Text, nullable=True)
+
+    recorded_at = Column(
+        DATETIME(fsp=6),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "order_id", "request_id",
+            name="uk_history_request",
+        ),
+        UniqueConstraint(
+            "tenant_id", "id",
+            name="uk_history_tenant_id",
+        ),
+        Index(
+            "idx_history_order",
+            "tenant_id", "order_id", "id",
+        ),
+        Index(
+            "idx_history_actor",
+            "tenant_id", "actor_user_id", "recorded_at",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "order_id"],
+            ["orders.tenant_id", "orders.id"],
+            name="fk_history_order",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        CheckConstraint(
+            "CHAR_LENGTH(TRIM(notes)) > 0",
+            name="chk_history_notes",
+        ),
+        CheckConstraint(
+            "previous_status <> new_status",
+            name="chk_history_status_change",
+        ),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
+    )
+
+
+class OrderEvidence(Base):
+    __tablename__ = "order_evidence"
+
+    id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    tenant_id = Column(BIGINT(unsigned=True), nullable=False)
+    history_id = Column(BIGINT(unsigned=True), nullable=False)
+
+    evidence_type = Column(
+        Enum(
+            "FRONT_PHOTO",
+            "BACK_PHOTO",
+            "SIDE_PHOTO",
+            "EXTRA_PHOTO",
+            "CUSTOMER_SIGNATURE",
+        ),
+        nullable=False,
+    )
+    slot_number = Column(
+        SMALLINT(unsigned=True),
+        nullable=False,
+        server_default=text("1"),
+    )
+
+    storage_bucket = Column(String(255), nullable=False)
+    storage_object = Column(String(1024), nullable=False)
+    storage_generation = Column(String(30), nullable=False)
+
+    original_filename = Column(String(255), nullable=True)
+    content_type = Column(String(100), nullable=False)
+    file_size_bytes = Column(BIGINT(unsigned=True), nullable=False)
+    sha256_hash = Column(
+        CHAR(64, charset="ascii", collation="ascii_bin"),
+        nullable=False,
+    )
+    caption = Column(Text, nullable=True)
+
+    uploaded_at = Column(
+        DATETIME(fsp=6),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "history_id", "evidence_type", "slot_number",
+            name="uk_evidence_slot",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "history_id"],
+            ["order_status_history.tenant_id", "order_status_history.id"],
+            name="fk_evidence_history",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        CheckConstraint(
+            "file_size_bytes > 0",
+            name="chk_evidence_file_size",
+        ),
+        CheckConstraint(
+            "slot_number >= 1 AND "
+            "(evidence_type = 'EXTRA_PHOTO' OR slot_number = 1)",
+            name="chk_evidence_slot",
+        ),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
+    )
