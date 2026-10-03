@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import func, text
+from sqlalchemy import and_, or_, func, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -2129,6 +2129,8 @@ def _save_store_action(
     side_photo, extra_photos, db, current_user,
 ):
     _require_store_user(current_user)
+    if action in {"dispatch", "deliver"}:
+        raise HTTPException(403, "Use the delivery dashboard to dispatch or deliver with required evidence")
     clean_notes = notes.strip()
     if not clean_notes or len(clean_notes) > 5000:
         raise HTTPException(400, "Notes are required (maximum 5,000 characters)")
@@ -2361,128 +2363,356 @@ def view_store_order_evidence(
     )
 
 
+def _delivery_order_query(db, current_user, order_id=None):
+    _require_delivery_user(current_user)
+    query = db.query(Order).filter(Order.tenant_id == current_user.tenant_id)
+    if current_user.role not in {"admin", "super_user"}:
+        partner_id = getattr(current_user, "delivery_partner_id", None)
+        if not partner_id:
+            raise HTTPException(403, "No delivery partner assigned to this account")
+        # Unassigned pickup orders can be claimed. Other orders stay with their partner.
+        query = query.filter(or_(
+            Order.delivery_partner_id == partner_id,
+            and_(Order.delivery_partner_id.is_(None),
+                 Order.order_status.in_(["READY", "DISPATCHED"])),
+        ))
+    if order_id is not None:
+        query = query.filter(Order.id == order_id)
+    return query
+
+
+def _get_delivery_order_or_404(db, current_user, order_id):
+    order = _delivery_order_query(db, current_user, order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found for this delivery partner")
+    return order
+
+
 @router.get("/delivery/orders")
 def delivery_orders(
     status: str | None = "READY",
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    _require_delivery_user(current_user)
-
-    query = db.query(Order).filter(Order.tenant_id == current_user.tenant_id)
-
+    query = _delivery_order_query(db, current_user)
     if status:
-        query = query.filter(Order.order_status == status.upper())
-
+        status_upper = status.upper()
+        if status_upper not in {"READY", "DISPATCHED", "OUT_FOR_DELIVERY", "DELIVERED"}:
+            raise HTTPException(400, "Invalid delivery status")
+        query = query.filter(Order.order_status.in_(["READY", "DISPATCHED"])) if status_upper == "READY" else query.filter(Order.order_status == status_upper)
     orders = query.order_by(Order.id.desc()).all()
-
-    return [
-        {
-            "order_id": int(order.id),
-            "order_number": order.order_number,
-            "order_status": order.order_status,
-            "status": order.order_status,
-            "payment_status": order.payment_status,
-            "total_amount": float(order.total_amount),
+    result = []
+    for order in orders:
+        dates = _order_date_values(db, order)
+        result.append({
+            "order_id": int(order.id), "order_number": order.order_number,
+            "order_status": order.order_status, "status": order.order_status,
+            "payment_status": order.payment_status, "total_amount": float(order.total_amount),
             "currency_code": order.currency_code,
             "store_id": int(order.store_id) if order.store_id else None,
             "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
             "delivery_pincode": order.delivery_pincode,
-            "delivery_date": _order_date_values(db, order)["delivery_date"],
-            "collection_date": _order_date_values(db, order)["collection_date"],
+            "delivery_date": dates["delivery_date"], "collection_date": dates["collection_date"],
             "delivery_address_text": order.delivery_address_text,
-            "customer_mobile": order.customer_mobile,
-            "customer_email": order.customer_email,
+            "customer_mobile": order.customer_mobile, "customer_email": order.customer_email,
             "notes": order.notes,
             "placed_at": order.placed_at.isoformat() if order.placed_at else None,
             "created_at": order.created_at.isoformat() if order.created_at else None,
-        }
-        for order in orders
-    ]
+        })
+    return result
 
 
-@router.post("/delivery/orders/{order_id}/out-for-delivery")
-def mark_order_out_for_delivery(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+@router.get("/delivery/orders/{order_id}")
+def delivery_order_detail(
+    order_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user),
 ):
-    _require_delivery_user(current_user)
-
-    order = (
-        db.query(Order)
-        .filter(Order.id == order_id, Order.tenant_id == current_user.tenant_id)
-        .first()
-    )
-
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    if order.order_status != "READY":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Order cannot move from {order.order_status} to OUT_FOR_DELIVERY",
-        )
-
-    order.order_status = "OUT_FOR_DELIVERY"
-
-    if getattr(current_user, "delivery_partner_id", None):
-        order.delivery_partner_id = current_user.delivery_partner_id
-
-    db.commit()
-    db.refresh(order)
-
+    order = _get_delivery_order_or_404(db, current_user, order_id)
+    dates = _order_date_values(db, order)
+    items = db.query(OrderItem).filter(
+        OrderItem.order_id == order.id, OrderItem.tenant_id == current_user.tenant_id,
+    ).order_by(OrderItem.id.asc()).all()
     return {
-        "message": "Order marked out for delivery",
-        "order_id": int(order.id),
-        "order_number": order.order_number,
-        "order_status": order.order_status,
-        "status": order.order_status,
+        "order_id": int(order.id), "order_number": order.order_number,
+        "order_status": order.order_status, "status": order.order_status,
+        "payment_status": order.payment_status, "total_amount": float(order.total_amount),
+        "currency_code": order.currency_code,
+        "store_id": int(order.store_id) if order.store_id else None,
         "delivery_partner_id": int(order.delivery_partner_id) if order.delivery_partner_id else None,
+        "delivery_pincode": order.delivery_pincode,
+        "delivery_date": dates["delivery_date"], "collection_date": dates["collection_date"],
+        "delivery_address_text": order.delivery_address_text,
+        "customer_mobile": order.customer_mobile, "customer_email": order.customer_email,
+        "notes": order.notes, "items": [_order_item_dict(item) for item in items],
     }
 
 
-@router.post("/delivery/orders/{order_id}/delivered")
-def mark_order_delivered_by_driver(
+RECEIPT_CONFIRMATION_TEXT = "I confirm receipt of this order."
+
+
+def _read_customer_signature(signature):
+    if signature is None:
+        raise HTTPException(400, "Customer signature is required")
+    content = signature.file.read(MAX_FILE_BYTES + 1)
+    if not content or len(content) > MAX_FILE_BYTES:
+        raise HTTPException(400, "Signature must be a non-empty PNG of 8 MB or smaller")
+    try:
+        from io import BytesIO
+        from PIL import Image, UnidentifiedImageError
+        with Image.open(BytesIO(content)) as image:
+            if image.format != "PNG" or image.width * image.height > 2_000_000:
+                raise HTTPException(400, "Signature must be a PNG up to 2 megapixels")
+            image.load()
+            rgba = image.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            grayscale = Image.alpha_composite(background, rgba).convert("L")
+            ink = grayscale.point(lambda pixel: 255 if pixel < 200 else 0)
+            bounds = ink.getbbox()
+            if (bounds is None or bounds[2] - bounds[0] < 10 or
+                    bounds[3] - bounds[1] < 4 or ink.histogram()[255] < 25):
+                raise HTTPException(400, "Signature is blank or too small")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(400, "Invalid signature PNG") from exc
+    return content
+
+
+def _save_delivery_action(
+    *, action, order_id, notes, request_id, front_photo, back_photo, side_photo,
+    extra_photos, customer_signature, recipient_name, receipt_confirmed, db, current_user,
+):
+    _require_delivery_user(current_user)
+    clean_notes = notes.strip()
+    if not clean_notes or len(clean_notes) > 5000:
+        raise HTTPException(400, "Notes are required (maximum 5,000 characters)")
+    try:
+        clean_request_id = str(UUID(request_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, "request_id must be a valid UUID")
+    target_status = "OUT_FOR_DELIVERY" if action == "out-for-delivery" else "DELIVERED"
+    allowed_from = {"READY", "DISPATCHED"} if action == "out-for-delivery" else {"OUT_FOR_DELIVERY"}
+    clean_recipient = (recipient_name or "").strip()
+    signature_content = None
+    try:
+        order = _delivery_order_query(db, current_user, order_id).with_for_update().first()
+        if not order:
+            raise HTTPException(404, "Order not found for this delivery partner")
+        existing = db.query(OrderStatusHistory).filter(
+            OrderStatusHistory.tenant_id == current_user.tenant_id,
+            OrderStatusHistory.order_id == order.id,
+            OrderStatusHistory.request_id == clean_request_id,
+        ).first()
+        if not existing and order.order_status not in allowed_from:
+            raise HTTPException(409, f"Order cannot move from {order.order_status} to {target_status}")
+        if action == "delivered":
+            if not clean_recipient or len(clean_recipient) > 255:
+                raise HTTPException(400, "Recipient name is required (maximum 255 characters)")
+            if not receipt_confirmed:
+                raise HTTPException(400, "Customer must confirm receipt of this order")
+            signature_content = _read_customer_signature(customer_signature)
+        elif customer_signature is not None or clean_recipient or receipt_confirmed:
+            raise HTTPException(400, "Receipt signature and recipient belong to the delivered action")
+        photos = _read_store_action_photos("ready", front_photo, back_photo, side_photo, extra_photos)
+        submitted_hashes = {(kind, slot): digest for kind, slot, _, _, digest in photos}
+        if signature_content is not None:
+            submitted_hashes[("CUSTOMER_SIGNATURE", 1)] = hashlib.sha256(signature_content).hexdigest()
+        if existing:
+            if (existing.action_code != action or existing.actor_user_id != current_user.id
+                    or existing.notes != clean_notes or (existing.recipient_name or "") != clean_recipient
+                    or existing.receipt_confirmation_text != (RECEIPT_CONFIRMATION_TEXT if action == "delivered" else None)):
+                raise HTTPException(409, "request_id was used for another submission")
+            saved = db.query(OrderEvidence).filter(
+                OrderEvidence.tenant_id == current_user.tenant_id,
+                OrderEvidence.history_id == existing.id,
+            ).all()
+            if {(e.evidence_type, e.slot_number): e.sha256_hash for e in saved} != submitted_hashes:
+                raise HTTPException(409, "Retry evidence differs from the saved submission")
+            response = _store_action_response(order, existing)
+            db.rollback()
+            return response
+        # Re-uploading dispatch files is not fresh evidence of customer delivery.
+        if action == "delivered":
+            dispatch_hashes = {row.sha256_hash for row in db.query(OrderEvidence).join(
+                OrderStatusHistory, OrderEvidence.history_id == OrderStatusHistory.id
+            ).filter(
+                OrderEvidence.tenant_id == current_user.tenant_id,
+                OrderStatusHistory.tenant_id == current_user.tenant_id,
+                OrderStatusHistory.order_id == order.id,
+                OrderStatusHistory.action_code == "out-for-delivery",
+                OrderEvidence.evidence_type.in_(["FRONT_PHOTO", "BACK_PHOTO", "SIDE_PHOTO"]),
+            ).all()}
+            if any(digest in dispatch_hashes for _, _, _, _, digest in photos):
+                raise HTTPException(400, "Take new delivery photos; do not reuse dispatch photos")
+        records = []
+        for kind, slot, photo, content, _ in photos:
+            records.append((slot, upload_order_evidence(
+                content=content, tenant_id=current_user.tenant_id, order_id=order.id,
+                actor_user_id=current_user.id, evidence_type=kind, original_filename=photo.filename,
+            )))
+        if signature_content is not None:
+            records.append((1, upload_order_evidence(
+                content=signature_content, tenant_id=current_user.tenant_id, order_id=order.id,
+                actor_user_id=current_user.id, evidence_type="CUSTOMER_SIGNATURE",
+                original_filename="customer_signature.png",
+            )))
+        history = OrderStatusHistory(
+            tenant_id=current_user.tenant_id, order_id=order.id, request_id=clean_request_id,
+            previous_status=order.order_status, new_status=target_status, action_code=action,
+            actor_type="ADMIN" if current_user.role in {"admin", "super_user"} else "DELIVERY",
+            actor_user_id=current_user.id, actor_name_snapshot=current_user.full_name,
+            actor_role_snapshot=current_user.role, notes=clean_notes,
+            recipient_name=clean_recipient or None,
+            receipt_confirmation_text=RECEIPT_CONFIRMATION_TEXT if action == "delivered" else None,
+            recorded_at=datetime.utcnow(),
+        )
+        db.add(history)
+        db.flush()
+        for slot, record in records:
+            db.add(OrderEvidence(tenant_id=current_user.tenant_id, history_id=history.id,
+                                 slot_number=slot, **record))
+        partner_id = getattr(current_user, "delivery_partner_id", None)
+        if order.delivery_partner_id is None and partner_id:
+            order.delivery_partner_id = partner_id
+        order.order_status = target_status
+        db.flush()
+        response = _store_action_response(order, history)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    if target_status == "DELIVERED":
+        try:
+            _notify_customer_order_delivered(db, order)
+            _notify_store_users_order_delivered(db, order)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logging.getLogger(__name__).exception("Delivery notification failed: order=%s", order_id)
+    return response
+
+
+def _make_delivery_action_endpoint(action):
+    def endpoint(
+        order_id: int, notes: str = Form(...), request_id: str = Form(...),
+        front_photo: UploadFile | None = File(None),
+        back_photo: UploadFile | None = File(None),
+        side_photo: UploadFile | None = File(None),
+        extra_photos: list[UploadFile] | None = File(None),
+        customer_signature: UploadFile | None = File(None),
+        recipient_name: str | None = Form(None), receipt_confirmed: bool = Form(False),
+        db: Session = Depends(get_db), current_user=Depends(get_current_user),
+    ):
+        return _save_delivery_action(
+            action=action, order_id=order_id, notes=notes, request_id=request_id,
+            front_photo=front_photo, back_photo=back_photo, side_photo=side_photo,
+            extra_photos=extra_photos, customer_signature=customer_signature,
+            recipient_name=recipient_name, receipt_confirmed=receipt_confirmed,
+            db=db, current_user=current_user,
+        )
+    endpoint.__name__ = "delivery_order_" + action.replace("-", "_") + "_with_evidence"
+    return endpoint
+
+
+for _delivery_action in ("out-for-delivery", "delivered"):
+    router.add_api_route(
+        f"/delivery/orders/{{order_id}}/{_delivery_action}",
+        _make_delivery_action_endpoint(_delivery_action), methods=["POST"],
+        name="delivery_order_" + _delivery_action.replace("-", "_") + "_with_evidence",
+    )
+
+
+@router.get("/delivery/orders/{order_id}/history")
+def delivery_order_history(
     order_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    _require_delivery_user(current_user)
+    order = _get_delivery_order_or_404(db, current_user, order_id)
+    histories = db.query(OrderStatusHistory).filter(
+        OrderStatusHistory.tenant_id == current_user.tenant_id,
+        OrderStatusHistory.order_id == order.id,
+    ).order_by(OrderStatusHistory.id.asc()).all()
+    if not histories:
+        return []
+    evidence = db.query(OrderEvidence).filter(
+        OrderEvidence.tenant_id == current_user.tenant_id,
+        OrderEvidence.history_id.in_([h.id for h in histories]),
+    ).order_by(OrderEvidence.id.asc()).all()
+    grouped = {}
+    for item in evidence:
+        grouped.setdefault(item.history_id, []).append({
+            "evidence_id": int(item.id),
+            "evidence_type": item.evidence_type,
+            "slot_number": item.slot_number,
+            "content_type": item.content_type,
+            "file_size_bytes": int(item.file_size_bytes),
+            "sha256_hash": item.sha256_hash,
+            "caption": item.caption,
+            "uploaded_at": item.uploaded_at.isoformat() + "Z",
+            "view_endpoint": f"/api/delivery/orders/{order_id}/evidence/{item.id}",
+        })
+    return [{
+        "history_id": int(h.id),
+        "previous_status": h.previous_status,
+        "new_status": h.new_status,
+        "action_code": h.action_code,
+        "actor_type": h.actor_type,
+        "actor_user_id": int(h.actor_user_id),
+        "actor_name": h.actor_name_snapshot,
+        "actor_role": h.actor_role_snapshot,
+        "notes": h.notes,
+        "recipient_name": h.recipient_name,
+        "receipt_confirmation_text": h.receipt_confirmation_text,
+        "recorded_at": h.recorded_at.isoformat() + "Z",
+        "evidence": grouped.get(h.id, []),
+    } for h in histories]
 
-    order = (
-        db.query(Order)
-        .filter(Order.id == order_id, Order.tenant_id == current_user.tenant_id)
-        .first()
+
+@router.get("/delivery/orders/{order_id}/evidence/{evidence_id}")
+def view_delivery_order_evidence(
+    order_id: int,
+    evidence_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    _get_delivery_order_or_404(db, current_user, order_id)
+    evidence = db.query(OrderEvidence).join(
+        OrderStatusHistory, OrderEvidence.history_id == OrderStatusHistory.id
+    ).filter(
+        OrderEvidence.id == evidence_id,
+        OrderEvidence.tenant_id == current_user.tenant_id,
+        OrderStatusHistory.tenant_id == current_user.tenant_id,
+        OrderStatusHistory.order_id == order_id,
+    ).first()
+    if not evidence:
+        raise HTTPException(404, "Evidence not found for this order")
+    configured_bucket = os.getenv("ORDER_EVIDENCE_BUCKET", "").strip()
+    if not configured_bucket or evidence.storage_bucket != configured_bucket:
+        raise HTTPException(503, "Evidence storage configuration mismatch")
+    if evidence.file_size_bytes > MAX_FILE_BYTES:
+        raise HTTPException(503, "Evidence exceeds supported size")
+    try:
+        from google.cloud import storage
+        blob = storage.Client().bucket(configured_bucket).blob(
+            evidence.storage_object, generation=int(evidence.storage_generation)
+        )
+        content = blob.download_as_bytes(timeout=60)
+        if (
+            len(content) != evidence.file_size_bytes
+            or hashlib.sha256(content).hexdigest() != evidence.sha256_hash
+        ):
+            raise RuntimeError("Evidence integrity check failed")
+    except Exception as exc:
+        logging.getLogger(__name__).exception(
+            "Evidence retrieval failed: order=%s evidence=%s", order_id, evidence_id
+        )
+        raise HTTPException(503, "Evidence could not be retrieved") from exc
+    return Response(
+        content=content,
+        media_type=evidence.content_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
 
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    if order.order_status != "OUT_FOR_DELIVERY":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Order cannot move from {order.order_status} to DELIVERED",
-        )
-
-    order.order_status = "DELIVERED"
-
-    if getattr(current_user, "delivery_partner_id", None):
-        order.delivery_partner_id = current_user.delivery_partner_id
-
-    _notify_customer_order_delivered(db, order)
-    _notify_store_users_order_delivered(db, order)
-
-    db.commit()
-    db.refresh(order)
-
-    return {
-        "message": "Order delivered",
-        "order_id": int(order.id),
-        "order_number": order.order_number,
-        "order_status": order.order_status,
-        "status": order.order_status,
-    }
 
 
 @router.get("/orders/{order_id}")
