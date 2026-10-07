@@ -8,15 +8,39 @@ def generate_otp(length: int = 6) -> str:
 
 
 def normalize_phone_number(phone_number: str) -> str:
-    phone_number = phone_number.strip().replace(" ", "")
+    phone_number = (
+        phone_number.strip()
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("(", "")
+        .replace(")", "")
+    )
 
+    # Full international / E.164 number.
     if phone_number.startswith("+"):
-        return phone_number
+        digits = phone_number[1:]
 
+        if not digits.isdigit():
+            raise ValueError("Invalid phone number")
+
+        if len(digits) < 8 or len(digits) > 15:
+            raise ValueError("Invalid phone number length")
+
+        return f"+{digits}"
+
+    # Backward compatibility for Australian local numbers only.
+    # Example: 0469823708 -> +61469823708
     if phone_number.startswith("0"):
-        return "+61" + phone_number[1:]
+        digits = phone_number[1:]
 
-    return phone_number
+        if not digits.isdigit():
+            raise ValueError("Invalid phone number")
+
+        return "+61" + digits
+
+    raise ValueError(
+        "Phone number must include country code, e.g. +61 or +91"
+    )
 
 
 def send_sms_otp(phone_number: str, otp_code: str) -> dict:
@@ -37,7 +61,10 @@ def send_sms_otp(phone_number: str, otp_code: str) -> dict:
     to_number = normalize_phone_number(phone_number)
 
     message = client.messages.create(
-        body=f"Your OTP is {otp_code}. It will expire in {settings.OTP_EXPIRY_MINUTES} minutes.",
+        body=(
+            f"Your OTP is {otp_code}. "
+            f"It will expire in {settings.OTP_EXPIRY_MINUTES} minutes."
+        ),
         from_=twilio_number,
         to=to_number,
     )
