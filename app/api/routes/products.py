@@ -1,12 +1,8 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 
-
-
 from sqlalchemy.orm import Session
 
 from sqlalchemy import bindparam, or_, func, text
-
-
 
 import os
 
@@ -14,29 +10,19 @@ import json
 
 from datetime import timedelta
 
-
-
 import google.auth
 
 from google.auth.transport.requests import Request
 
 from google.cloud import storage
 
-
-
 from app.db.session import get_db
 
 from app.models.commerce import Category, Product, Tenant
 
-
-
 router = APIRouter(prefix="/api", tags=["catalog"])
 
 storage_client = storage.Client()
-
-
-
-
 
 def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
@@ -44,13 +30,9 @@ def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
         return None
 
-
-
     if not gs_uri.startswith("gs://"):
 
         return gs_uri
-
-
 
     try:
 
@@ -58,13 +40,9 @@ def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
         bucket_name, blob_name = path.split("/", 1)
 
-
-
         bucket = storage_client.bucket(bucket_name)
 
         blob = bucket.blob(blob_name)
-
-
 
         credentials, _ = google.auth.default(
 
@@ -74,8 +52,6 @@ def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
         credentials.refresh(Request())
 
-
-
         service_account_email = os.getenv(
 
             "SIGNED_URL_SERVICE_ACCOUNT",
@@ -83,8 +59,6 @@ def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
             "184732521634-compute@developer.gserviceaccount.com",
 
         )
-
-
 
         return blob.generate_signed_url(
 
@@ -100,17 +74,11 @@ def _signed_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
         )
 
-
-
     except Exception as e:
 
         print(f"Signed URL failed for {gs_uri}: {e}")
 
         return None
-
-
-
-
 
 def _public_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
@@ -118,13 +86,9 @@ def _public_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
         return None
 
-
-
     if not gs_uri.startswith("gs://"):
 
         return gs_uri
-
-
 
     try:
 
@@ -140,33 +104,19 @@ def _public_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
         return None
 
-
-
-
-
 def _image_url_from_gs_uri(gs_uri: str | None) -> str | None:
 
     use_public = os.getenv("GCS_PUBLIC_IMAGES", "false").lower() == "true"
-
-
 
     if use_public:
 
         return _public_url_from_gs_uri(gs_uri)
 
-
-
     return _signed_url_from_gs_uri(gs_uri)
-
-
-
-
 
 def _gallery_urls_from_json(raw_gallery) -> list[str]:
 
     """Return gallery image URLs from products.gallery_json.
-
-
 
     Supports MySQL JSON returned as a Python list, JSON string, comma-separated
 
@@ -180,11 +130,7 @@ def _gallery_urls_from_json(raw_gallery) -> list[str]:
 
         return []
 
-
-
     gallery = raw_gallery
-
-
 
     if isinstance(gallery, str):
 
@@ -194,8 +140,6 @@ def _gallery_urls_from_json(raw_gallery) -> list[str]:
 
             return []
 
-
-
         try:
 
             gallery = json.loads(gallery)
@@ -204,23 +148,15 @@ def _gallery_urls_from_json(raw_gallery) -> list[str]:
 
             gallery = [x.strip() for x in gallery.split(",") if x.strip()]
 
-
-
     if not isinstance(gallery, list):
 
         return []
 
-
-
     urls: list[str] = []
-
-
 
     for item in gallery:
 
         value = None
-
-
 
         if isinstance(item, str):
 
@@ -230,13 +166,9 @@ def _gallery_urls_from_json(raw_gallery) -> list[str]:
 
             value = item.get("image_url") or item.get("url") or item.get("src")
 
-
-
         if not value:
 
             continue
-
-
 
         final_url = _image_url_from_gs_uri(str(value).strip())
 
@@ -244,13 +176,7 @@ def _gallery_urls_from_json(raw_gallery) -> list[str]:
 
             urls.append(final_url)
 
-
-
     return urls
-
-
-
-
 
 def _get_tenant_by_code(db: Session, tenant_code: str):
 
@@ -270,35 +196,21 @@ def _get_tenant_by_code(db: Session, tenant_code: str):
 
     return tenant
 
-
-
-
-
 def _eta_text(min_days, max_days, delivery_name: str | None = None) -> str:
 
     min_days = int(min_days or 0)
 
     max_days = int(max_days or 0)
 
-
-
     if min_days == 0 and max_days == 0:
 
         return "Today"
-
-
 
     if min_days == max_days:
 
         return f"{min_days} business day" if min_days == 1 else f"{min_days} business days"
 
-
-
     return f"{min_days}-{max_days} business days"
-
-
-
-
 
 def _delivery_options_for_product_store(
 
@@ -392,11 +304,7 @@ def _delivery_options_for_product_store(
 
     ).mappings().all()
 
-
-
     options = []
-
-
 
     for r in rows:
 
@@ -405,8 +313,6 @@ def _delivery_options_for_product_store(
         fee = float(r["delivery_fee"] or 0)
 
         is_free = bool(r["is_free"]) or fee == 0
-
-
 
         options.append(
 
@@ -442,13 +348,7 @@ def _delivery_options_for_product_store(
 
         )
 
-
-
     return options
-
-
-
-
 
 def _size_counts_for_products(
 
@@ -467,8 +367,6 @@ def _size_counts_for_products(
     if not unique_product_ids:
 
         return {}
-
-
 
     statement = text(
 
@@ -504,8 +402,6 @@ def _size_counts_for_products(
 
     ).bindparams(bindparam("product_ids", expanding=True))
 
-
-
     rows = db.execute(
 
         statement,
@@ -520,8 +416,6 @@ def _size_counts_for_products(
 
     ).mappings().all()
 
-
-
     return {
 
         int(row["product_id"]): int(row["size_count"] or 0)
@@ -529,12 +423,6 @@ def _size_counts_for_products(
         for row in rows
 
     }
-
-
-
-
-
-
 
 def _variant_payload_for_product(
 
@@ -550,8 +438,6 @@ def _variant_payload_for_product(
 
     """Return selectable options and purchasable variants for one product.
 
-
-
     When store_id is supplied, price/stock come from store_product_variants.
 
     A variant that is not mapped to that store is returned with zero store stock
@@ -559,8 +445,6 @@ def _variant_payload_for_product(
     so the UI can show it as unavailable instead of overselling it.
 
     """
-
-
 
     option_rows = db.execute(
 
@@ -628,15 +512,11 @@ def _variant_payload_for_product(
 
     ).mappings().all()
 
-
-
     options_by_id = {}
 
     for r in option_rows:
 
         option_id = int(r["option_id"])
-
-
 
         if option_id not in options_by_id:
 
@@ -657,8 +537,6 @@ def _variant_payload_for_product(
                 "values": [],
 
             }
-
-
 
         if r["option_value_id"] is not None:
 
@@ -684,11 +562,7 @@ def _variant_payload_for_product(
 
             )
 
-
-
     options = list(options_by_id.values())
-
-
 
     params = {
 
@@ -697,8 +571,6 @@ def _variant_payload_for_product(
         "product_id": product_id,
 
     }
-
-
 
     if store_id is not None:
 
@@ -745,8 +617,6 @@ def _variant_payload_for_product(
         """
 
         store_join = ""
-
-
 
     variant_rows = db.execute(
 
@@ -842,17 +712,11 @@ def _variant_payload_for_product(
 
     ).mappings().all()
 
-
-
     variants_by_id = {}
-
-
 
     for r in variant_rows:
 
         variant_id = int(r["variant_id"])
-
-
 
         if variant_id not in variants_by_id:
 
@@ -876,19 +740,13 @@ def _variant_payload_for_product(
 
                 local_price = None
 
-
-
             available_stock = max(stock_qty - reserved_qty, 0)
 
             default_price = r["sale_price"] if r["sale_price"] is not None else r["base_price"]
 
             final_price = local_price if local_price is not None else default_price
 
-
-
             gallery_images = _gallery_urls_from_json(r["gallery_json"])
-
-
 
             variants_by_id[variant_id] = {
 
@@ -950,19 +808,13 @@ def _variant_payload_for_product(
 
             }
 
-
-
         variant = variants_by_id[variant_id]
-
-
 
         if r["option_value_id"] is not None:
 
             option_id = int(r["option_id"])
 
             option_value_id = int(r["option_value_id"])
-
-
 
             if option_value_id not in variant["option_value_ids"]:
 
@@ -986,17 +838,11 @@ def _variant_payload_for_product(
 
                 )
 
-
-
             if r["option_name"]:
 
                 variant["selected_options"][r["option_name"]] = r["option_value"]
 
-
-
     variants = list(variants_by_id.values())
-
-
 
     prices = [v["price"] for v in variants]
 
@@ -1008,8 +854,6 @@ def _variant_payload_for_product(
 
     total_available_stock = sum(v["available_stock"] for v in variants)
 
-
-
     default_variant_id = None
 
     for v in variants:
@@ -1019,8 +863,6 @@ def _variant_payload_for_product(
             default_variant_id = v["id"]
 
             break
-
-
 
     if default_variant_id is None:
 
@@ -1032,13 +874,9 @@ def _variant_payload_for_product(
 
                 break
 
-
-
     if default_variant_id is None and variants:
 
         default_variant_id = variants[0]["id"]
-
-
 
     return {
 
@@ -1060,19 +898,11 @@ def _variant_payload_for_product(
 
     }
 
-
-
-
-
 def _apply_variant_payload(product_dict: dict, variant_payload: dict) -> dict:
 
     product_dict.update(variant_payload)
 
-
-
     variants = variant_payload.get("variants") or []
-
-
 
     if variants:
 
@@ -1100,13 +930,7 @@ def _apply_variant_payload(product_dict: dict, variant_payload: dict) -> dict:
 
         )
 
-
-
     return product_dict
-
-
-
-
 
 def _to_product_dict(
 
@@ -1126,21 +950,15 @@ def _to_product_dict(
 
     final_price = local_price if local_price is not None else default_price
 
-
-
     stock_qty = store_stock_qty if store_stock_qty is not None else product.stock_qty
 
     reserved = reserved_qty if reserved_qty is not None else 0
 
     available_stock = max((stock_qty or 0) - (reserved or 0), 0)
 
-
-
     image_url = _image_url_from_gs_uri(product.image_url)
 
     gallery_images = _gallery_urls_from_json(getattr(product, "gallery_json", None))
-
-
 
     return {
 
@@ -1228,196 +1046,192 @@ def _to_product_dict(
 
     }
 
-
-
-
-
 @router.get("/categories")
-
 def categories(
-
     tenant_code: str = Query(...),
-
     parent_id: int | None = Query(default=None),
-
     category_level: str | None = Query(default=None),
-
     db: Session = Depends(get_db),
-
 ):
-
     tenant = _get_tenant_by_code(db, tenant_code)
 
-
-
-    query = (
-
-        db.query(Category)
-
-        .filter(
-
-            Category.tenant_id == tenant.id,
-
-            Category.is_active == True,
-
-        )
-
-    )
-
-
+    # Query the new database flag directly, without requiring a Category ORM
+    # model change. Preserve the existing endpoint parameters and response keys.
+    conditions = ["tenant_id = :tenant_id", "is_active = 1"]
+    params = {"tenant_id": int(tenant.id)}
 
     if parent_id is not None:
-
-        query = query.filter(Category.parent_id == parent_id)
-
-
+        conditions.append("parent_id = :parent_id")
+        params["parent_id"] = parent_id
 
     if category_level:
+        conditions.append("category_level = :category_level")
+        params["category_level"] = category_level.upper()
 
-        query = query.filter(Category.category_level == category_level.upper())
-
-
-
-    rows = (
-
-        query.order_by(
-
-            Category.sort_order.asc(),
-
-            Category.category_name.asc(),
-
-            Category.id.asc(),
-
-        )
-
-        .all()
-
-    )
-
-
+    rows = db.execute(
+        text(f"""
+            SELECT id, category_name, category_slug, parent_id,
+                   category_level, sort_order, image_url, is_coming_soon
+            FROM categories
+            WHERE {' AND '.join(conditions)}
+            ORDER BY is_coming_soon ASC, sort_order ASC,
+                     category_name ASC, id ASC
+        """),
+        params,
+    ).mappings().all()
 
     def resolve_image_url(value):
-
         if not value:
-
             return None
-
-
-
         value = str(value).strip()
-
-
-
         if value.startswith("http://") or value.startswith("https://"):
-
             return value
-
-
-
         if value.startswith("gs://"):
-
             return _image_url_from_gs_uri(value)
-
-
-
         return value
 
-
-
     return [
-
         {
-
-            "id": int(r.id),
-
-            "name": r.category_name,
-
-            "category_name": r.category_name,
-
-            "slug": r.category_slug,
-
-            "category_slug": r.category_slug,
-
-            "parent_id": int(r.parent_id) if getattr(r, "parent_id", None) else None,
-
-            "category_level": getattr(r, "category_level", None),
-
-            "sort_order": int(r.sort_order) if getattr(r, "sort_order", None) is not None else 0,
-
-            "image_url": resolve_image_url(getattr(r, "image_url", None)),
-
+            "id": int(r["id"]),
+            "name": r["category_name"],
+            "category_name": r["category_name"],
+            "slug": r["category_slug"],
+            "category_slug": r["category_slug"],
+            "parent_id": int(r["parent_id"]) if r["parent_id"] is not None else None,
+            "category_level": r["category_level"],
+            "sort_order": int(r["sort_order"] or 0),
+            "image_url": resolve_image_url(r["image_url"]),
+            "is_coming_soon": bool(r["is_coming_soon"]),
         }
-
         for r in rows
-
     ]
 
 
-
 @router.get("/products/filters")
-def product_filter_options(
-    tenant_code: str = Query(...),
-    pincode: str | None = Query(default=None),
-    db: Session = Depends(get_db),
-):
-    """All eligible vendor/category options, independent of product pagination."""
-    tenant = _get_tenant_by_code(db, tenant_code)
-    params = {"tenant_id": int(tenant.id)}
-    pin_condition = ""
-    if pincode and pincode.strip():
-        params["pincode"] = pincode.strip()
-        pin_condition = """AND EXISTS (
-            SELECT 1 FROM store_pincodes spi
-            WHERE spi.tenant_id = :tenant_id AND spi.store_id = sp.store_id
-              AND spi.pincode = :pincode AND spi.is_active = 1
-        )"""
-    base = f"""
-        FROM products p
-        JOIN store_products sp ON sp.product_id = p.id
-            AND sp.tenant_id = p.tenant_id AND sp.is_active = 1
-        JOIN stores s ON s.id = sp.store_id
-            AND s.tenant_id = sp.tenant_id AND s.is_active = 1
-        LEFT JOIN categories c ON c.id = p.category_id
-            AND c.tenant_id = p.tenant_id
-        LEFT JOIN categories pc ON pc.id = c.parent_id
-            AND pc.tenant_id = c.tenant_id
-        WHERE p.tenant_id = :tenant_id AND p.is_active = 1
-          AND (sp.stock_qty - sp.reserved_qty) >= 0
-          {pin_condition}
-    """
-    vendors = db.execute(text(f"""
-        SELECT s.id AS id, s.store_name AS store_name,
-               COALESCE(NULLIF(s.seller_display_name, ''), s.store_name) AS name,
-               COUNT(DISTINCT p.id) AS product_count
-        {base}
-        GROUP BY s.id, s.store_name, s.seller_display_name
-        ORDER BY name
-    """), params).mappings().all()
-    cats = db.execute(text(f"""
-        SELECT COALESCE(pc.id, c.id) AS id,
-               COALESCE(pc.category_name, c.category_name) AS name,
-               COUNT(DISTINCT p.id) AS product_count
-        {base}
-          AND c.id IS NOT NULL
-        GROUP BY COALESCE(pc.id, c.id), COALESCE(pc.category_name, c.category_name)
-        ORDER BY name
-    """), params).mappings().all()
-    price = db.execute(text(f"""
-        SELECT MIN(COALESCE(sp.local_price, p.sale_price, p.base_price)) AS min_price,
-               MAX(COALESCE(sp.local_price, p.sale_price, p.base_price)) AS max_price
-        {base}
-    """), params).mappings().first()
-    return {
-        "vendors": [{"id": int(v["id"]), "store_id": int(v["id"]),
-                     "name": v["name"], "store_name": v["store_name"],
-                     "product_count": int(v["product_count"])} for v in vendors],
-        "categories": [{"id": int(c["id"]), "category_id": int(c["id"]),
-                        "name": c["name"], "product_count": int(c["product_count"])} for c in cats],
-        "min_price": float(price["min_price"]) if price and price["min_price"] is not None else None,
-        "max_price": float(price["max_price"]) if price and price["max_price"] is not None else None,
-        "pincode": pincode,
-    }
 
+def product_filter_options(
+
+    tenant_code: str = Query(...),
+
+    pincode: str | None = Query(default=None),
+
+    db: Session = Depends(get_db),
+
+):
+
+    """All eligible vendor/category options, independent of product pagination."""
+
+    tenant = _get_tenant_by_code(db, tenant_code)
+
+    params = {"tenant_id": int(tenant.id)}
+
+    pin_condition = ""
+
+    if pincode and pincode.strip():
+
+        params["pincode"] = pincode.strip()
+
+        pin_condition = """AND EXISTS (
+
+            SELECT 1 FROM store_pincodes spi
+
+            WHERE spi.tenant_id = :tenant_id AND spi.store_id = sp.store_id
+
+              AND spi.pincode = :pincode AND spi.is_active = 1
+
+        )"""
+
+    base = f"""
+
+        FROM products p
+
+        JOIN store_products sp ON sp.product_id = p.id
+
+            AND sp.tenant_id = p.tenant_id AND sp.is_active = 1
+
+        JOIN stores s ON s.id = sp.store_id
+
+            AND s.tenant_id = sp.tenant_id AND s.is_active = 1
+
+        LEFT JOIN categories c ON c.id = p.category_id
+
+            AND c.tenant_id = p.tenant_id
+
+        LEFT JOIN categories pc ON pc.id = c.parent_id
+
+            AND pc.tenant_id = c.tenant_id
+
+        WHERE p.tenant_id = :tenant_id AND p.is_active = 1
+
+          AND (sp.stock_qty - sp.reserved_qty) >= 0
+
+          {pin_condition}
+
+    """
+
+    vendors = db.execute(text(f"""
+
+        SELECT s.id AS id, s.store_name AS store_name,
+
+               COALESCE(NULLIF(s.seller_display_name, ''), s.store_name) AS name,
+
+               COUNT(DISTINCT p.id) AS product_count
+
+        {base}
+
+        GROUP BY s.id, s.store_name, s.seller_display_name
+
+        ORDER BY name
+
+    """), params).mappings().all()
+
+    cats = db.execute(text(f"""
+
+        SELECT COALESCE(pc.id, c.id) AS id,
+
+               COALESCE(pc.category_name, c.category_name) AS name,
+
+               COUNT(DISTINCT p.id) AS product_count
+
+        {base}
+
+          AND c.id IS NOT NULL
+
+        GROUP BY COALESCE(pc.id, c.id), COALESCE(pc.category_name, c.category_name)
+
+        ORDER BY name
+
+    """), params).mappings().all()
+
+    price = db.execute(text(f"""
+
+        SELECT MIN(COALESCE(sp.local_price, p.sale_price, p.base_price)) AS min_price,
+
+               MAX(COALESCE(sp.local_price, p.sale_price, p.base_price)) AS max_price
+
+        {base}
+
+    """), params).mappings().first()
+
+    return {
+
+        "vendors": [{"id": int(v["id"]), "store_id": int(v["id"]),
+
+                     "name": v["name"], "store_name": v["store_name"],
+
+                     "product_count": int(v["product_count"])} for v in vendors],
+
+        "categories": [{"id": int(c["id"]), "category_id": int(c["id"]),
+
+                        "name": c["name"], "product_count": int(c["product_count"])} for c in cats],
+
+        "min_price": float(price["min_price"]) if price and price["min_price"] is not None else None,
+
+        "max_price": float(price["max_price"]) if price and price["max_price"] is not None else None,
+
+        "pincode": pincode,
+
+    }
 
 @router.get("/products")
 
@@ -1458,9 +1272,8 @@ def products(
     offset = (page - 1) * page_size
 
     if min_price is not None and max_price is not None and min_price > max_price:
+
         raise HTTPException(status_code=422, detail="min_price cannot exceed max_price")
-
-
 
     # Marketplace mode:
 
@@ -1488,8 +1301,6 @@ def products(
 
         ]
 
-
-
         params = {
 
             "tenant_id": tenant.id,
@@ -1500,15 +1311,11 @@ def products(
 
         }
 
-
-
         if store_id is not None:
 
             where_clauses.append("sp.store_id = :store_id")
 
             params["store_id"] = store_id
-
-
 
         if pincode is not None and pincode.strip():
 
@@ -1538,17 +1345,11 @@ def products(
 
             params["pincode"] = pincode.strip()
 
-
-
         if featured is True:
 
             where_clauses.append("p.is_featured = 1")
 
-
-
         selected_category_id = subcategory_id if subcategory_id is not None else category_id
-
-
 
         if selected_category_id is not None:
 
@@ -1569,8 +1370,6 @@ def products(
             )
 
             params["category_id"] = selected_category_id
-
-
 
         if search and search.strip():
 
@@ -1600,35 +1399,51 @@ def products(
 
             params["search"] = f"%{search.strip()}%"
 
-
-
         # Apply customer-facing store price, without modifying stored prices.
+
         selling_price_sql = "COALESCE(sp.local_price, p.sale_price, p.base_price)"
+
         if min_price is not None:
+
             where_clauses.append(f"{selling_price_sql} >= :min_price")
+
             params["min_price"] = min_price
+
         if max_price is not None:
+
             where_clauses.append(f"{selling_price_sql} <= :max_price")
+
             params["max_price"] = max_price
 
         # Stable per-seed vendor rotation: page 2 continues page 1 without
+
         # reshuffling. MySQL 8 window functions are required.
+
         if discovery == "mixed":
+
             params["discovery_seed"] = discovery_seed
+
             order_sql = """ORDER BY
+
                 ROW_NUMBER() OVER (
+
                     PARTITION BY sp.store_id
+
                     ORDER BY CRC32(CONCAT(p.id, ':', :discovery_seed)), p.id
+
                 ),
+
                 CRC32(CONCAT(COALESCE(c.parent_id, c.id, 0), ':', sp.store_id, ':', :discovery_seed)),
+
                 CRC32(CONCAT(sp.store_id, ':', :discovery_seed)),
+
                 p.id"""
+
         else:
+
             order_sql = "ORDER BY p.sort_order ASC, p.id DESC"
 
         where_sql = " AND ".join(where_clauses)
-
-
 
         total = db.execute(
 
@@ -1673,8 +1488,6 @@ def products(
             params,
 
         ).scalar() or 0
-
-
 
         rows = db.execute(
 
@@ -1786,8 +1599,6 @@ def products(
 
         ).mappings().all()
 
-
-
         size_counts = _size_counts_for_products(
 
             db=db,
@@ -1798,8 +1609,6 @@ def products(
 
         )
 
-
-
         items = []
 
         for r in rows:
@@ -1808,13 +1617,9 @@ def products(
 
             gallery_images = _gallery_urls_from_json(r.get("gallery_json"))
 
-
-
             default_price = r["sale_price"] if r["sale_price"] is not None else r["base_price"]
 
             final_price = r["local_price"] if r["local_price"] is not None else default_price
-
-
 
             # If current category is a SUB category, parent is main category.
 
@@ -1838,8 +1643,6 @@ def products(
 
                 subcategory_name = None
 
-
-
             delivery_options = _delivery_options_for_product_store(
 
                 db=db,
@@ -1852,15 +1655,11 @@ def products(
 
             )
 
-
-
             sold_by = r["seller_display_name"] or r["store_name"]
 
             ships_from = r["ships_from_name"] or r["store_name"]
 
             seller_contact_email = r["seller_contact_email"] or r["store_email"]
-
-
 
             items.append(
 
@@ -1954,8 +1753,6 @@ def products(
 
             )
 
-
-
         return {
 
             "items": items,
@@ -1976,8 +1773,6 @@ def products(
 
         }
 
-
-
     # Legacy no-store/no-pincode mode.
 
     query = (
@@ -1996,19 +1791,13 @@ def products(
 
     )
 
-
-
     if featured is True:
 
         query = query.filter(Product.is_featured == True)
 
-
-
     if category_id is not None:
 
         query = query.filter(Product.category_id == category_id)
-
-
 
     if search and search.strip():
 
@@ -2030,16 +1819,15 @@ def products(
 
         )
 
-
-
     if min_price is not None:
+
         query = query.filter(func.coalesce(Product.sale_price, Product.base_price) >= min_price)
+
     if max_price is not None:
+
         query = query.filter(func.coalesce(Product.sale_price, Product.base_price) <= max_price)
 
     total = query.with_entities(func.count(Product.id)).scalar() or 0
-
-
 
     rows = (
 
@@ -2053,8 +1841,6 @@ def products(
 
     )
 
-
-
     size_counts = _size_counts_for_products(
 
         db=db,
@@ -2065,8 +1851,6 @@ def products(
 
     )
 
-
-
     items = []
 
     for product, category_name in rows:
@@ -2076,8 +1860,6 @@ def products(
         item["size_count"] = size_counts.get(int(product.id), 0)
 
         items.append(item)
-
-
 
     return {
 
@@ -2099,12 +1881,6 @@ def products(
 
     }
 
-
-
-
-
-
-
 @router.get("/products/{product_id}/variants")
 
 def product_variants(
@@ -2120,8 +1896,6 @@ def product_variants(
 ):
 
     tenant = _get_tenant_by_code(db, tenant_code)
-
-
 
     product = (
 
@@ -2141,13 +1915,9 @@ def product_variants(
 
     )
 
-
-
     if not product:
 
         raise HTTPException(status_code=404, detail="Product not found")
-
-
 
     if not bool(getattr(product, "has_variants", False)):
 
@@ -2177,8 +1947,6 @@ def product_variants(
 
         }
 
-
-
     payload = _variant_payload_for_product(
 
         db=db,
@@ -2191,8 +1959,6 @@ def product_variants(
 
     )
 
-
-
     return {
 
         "product_id": int(product.id),
@@ -2204,12 +1970,6 @@ def product_variants(
         **payload,
 
     }
-
-
-
-
-
-
 
 @router.get("/products/{product_id}")
 
@@ -2228,8 +1988,6 @@ def product_by_id(
 ):
 
     tenant = _get_tenant_by_code(db, tenant_code)
-
-
 
     if store_id is not None or pincode is not None:
 
@@ -2251,8 +2009,6 @@ def product_by_id(
 
         ]
 
-
-
         params = {
 
             "product_id": product_id,
@@ -2261,15 +2017,11 @@ def product_by_id(
 
         }
 
-
-
         if store_id is not None:
 
             where_clauses.append("sp.store_id = :store_id")
 
             params["store_id"] = store_id
-
-
 
         if pincode is not None and pincode.strip():
 
@@ -2299,11 +2051,7 @@ def product_by_id(
 
             params["pincode"] = pincode.strip()
 
-
-
         where_sql = " AND ".join(where_clauses)
-
-
 
         r = db.execute(
 
@@ -2409,13 +2157,9 @@ def product_by_id(
 
         ).mappings().first()
 
-
-
         if not r:
 
             raise HTTPException(status_code=404, detail="Product not found for this store/pincode")
-
-
 
         image_url = _image_url_from_gs_uri(r["image_url"])
 
@@ -2424,8 +2168,6 @@ def product_by_id(
         default_price = r["sale_price"] if r["sale_price"] is not None else r["base_price"]
 
         final_price = r["local_price"] if r["local_price"] is not None else default_price
-
-
 
         if r["parent_category_id"] is not None:
 
@@ -2447,8 +2189,6 @@ def product_by_id(
 
             subcategory_name = None
 
-
-
         delivery_options = _delivery_options_for_product_store(
 
             db=db,
@@ -2461,15 +2201,11 @@ def product_by_id(
 
         )
 
-
-
         sold_by = r["seller_display_name"] or r["store_name"]
 
         ships_from = r["ships_from_name"] or r["store_name"]
 
         seller_contact_email = r["seller_contact_email"] or r["store_email"]
-
-
 
         result = {
 
@@ -2557,8 +2293,6 @@ def product_by_id(
 
         }
 
-
-
         if bool(r["has_variants"]):
 
             variant_payload = _variant_payload_for_product(
@@ -2575,11 +2309,7 @@ def product_by_id(
 
             _apply_variant_payload(result, variant_payload)
 
-
-
         return result
-
-
 
     row = (
 
@@ -2601,19 +2331,13 @@ def product_by_id(
 
     )
 
-
-
     if not row:
 
         raise HTTPException(status_code=404, detail="Product not found")
 
-
-
     product, category_name = row
 
     result = _to_product_dict(product, category_name)
-
-
 
     if bool(getattr(product, "has_variants", False)):
 
@@ -2630,7 +2354,5 @@ def product_by_id(
         )
 
         _apply_variant_payload(result, variant_payload)
-
-
 
     return result
